@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-pulse"
-version = "0.4.7"
+version = "0.5.0"
 description = "Free open-source research agent: daily paper digests, multi-source search, and interactive CLI"
 readme = "README.md"
 license = {text = "MIT"}
@@ -54,6 +54,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+desktop = [
+    "customtkinter>=5.2.0",
+]
 web = [
     "flask>=2.0.0",
 ]
@@ -63,6 +66,7 @@ dev = [
     "flask>=2.0.0",
 ]
 all = [
+    "customtkinter>=5.2.0",
     "flask>=2.0.0",
 ]
 

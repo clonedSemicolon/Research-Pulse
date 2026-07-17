@@ -14,7 +14,27 @@ Or with pipx (Mac/Linux):
 pipx install research-pulse
 ```
 
-## Usage
+## Desktop App
+
+Launch the GUI application:
+
+```bash
+# Install with desktop support
+pip install research-pulse[desktop]
+
+# Launch the app
+research-pulse desktop
+```
+
+Features:
+- Dark mode interface
+- Browse papers with ranking and venue info
+- Search papers across multiple sources
+- Manage topics with checkboxes
+- Rate papers and track reading history
+- Open papers in browser with one click
+
+## CLI Usage
 
 ```bash
 research-pulse                          # Today's papers

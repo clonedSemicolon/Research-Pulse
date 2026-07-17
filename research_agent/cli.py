@@ -496,6 +496,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd == "add-topic":
         return cmd_add_topic(rest)
 
+    if cmd in ("desktop", "gui", "app"):
+        try:
+            from .desktop import run_desktop
+            run_desktop()
+            return 0
+        except ImportError:
+            ui.error("Desktop app requires customtkinter.")
+            ui.info("Install with: pip install research-pulse[desktop]")
+            return 1
+
     if cmd in ("config", "papers", "settings"):
         if cmd in ("papers", "settings") and rest:
             return cmd_config(["papers"] + rest)
