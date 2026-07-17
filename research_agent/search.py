@@ -14,14 +14,47 @@ Usage:
 from __future__ import annotations
 
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Optional
+from functools import lru_cache
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .bm25 import rank_papers_combined
 from .config import load_settings, load_secrets
 from .models import Paper
 from .sources import arxiv, openalex, biorxiv, crossref, semanticscholar, europepmc
 from .venues import enrich_papers, filter_papers
+
+# ── Search Cache ─────────────────────────────────────────────────────────
+# Simple in-memory cache to avoid repeated API calls for the same query
+
+class SearchCache:
+    """Cache search results with TTL (time-to-live)."""
+
+    def __init__(self, ttl_seconds: int = 300):  # 5 minutes TTL
+        self._cache: Dict[str, Tuple[List[Paper], float]] = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key: str) -> Optional[List[Paper]]:
+        """Get cached result if it exists and hasn't expired."""
+        if key in self._cache:
+            result, timestamp = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return result
+            else:
+                del self._cache[key]
+        return None
+
+    def set(self, key: str, result: List[Paper]) -> None:
+        """Cache a search result."""
+        self._cache[key] = (result, time.time())
+
+    def clear(self) -> None:
+        """Clear all cached results."""
+        self._cache.clear()
+
+# Global cache instance
+_search_cache = SearchCache(ttl_seconds=300)
 
 
 def _keyword_score(paper: Paper, query: str) -> float:
@@ -180,7 +213,8 @@ def search_papers(query: str, sources: Optional[List[str]] = None,
                   venues: Optional[List[str]] = None,
                   core_min: Optional[str] = None,
                   year: Optional[int] = None,
-                  on_source: Optional[Callable[[str, str, int], None]] = None
+                  on_source: Optional[Callable[[str, str, int], None]] = None,
+                  use_cache: bool = True
                   ) -> List[Paper]:
     """Search across multiple sources by keyword.
 
@@ -197,12 +231,20 @@ def search_papers(query: str, sources: Optional[List[str]] = None,
         venues: Optional list of conference/journal names or catalog ids
         core_min: Minimum CORE rank (A*, A, B, C)
         year: Publication year filter
+        use_cache: Whether to use cached results (default True)
 
     Returns:
         List of Paper objects sorted by relevance to query.
     """
     if not query.strip():
         return []
+
+    # Check cache first
+    if use_cache:
+        cache_key = f"{query}:{days}:{limit}:{','.join(sources or [])}:{min_citations}:{use_bm25}"
+        cached = _search_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     if sources is None:
         # Semantic Scholar self-skips unless S2_API_KEY is set, so including
@@ -265,16 +307,30 @@ def search_papers(query: str, sources: Optional[List[str]] = None,
             p.score = _keyword_score(p, query)
         unique.sort(key=lambda p: p.score, reverse=True)
 
-    return unique[:limit]
+    result = unique[:limit]
+
+    # Cache the result
+    if use_cache:
+        cache_key = f"{query}:{days}:{limit}:{','.join(sources or [])}:{min_citations}:{use_bm25}"
+        _search_cache.set(cache_key, result)
+
+    return result
 
 
-def search_by_topic(topic_id: str, days: int = 7, limit: int = 10) -> List[Paper]:
+def search_by_topic(topic_id: str, days: int = 7, limit: int = 10, use_cache: bool = True) -> List[Paper]:
     """Search for papers in a specific topic (uses topic config).
 
     This is useful when the user wants to see recent papers in a known topic
     without waiting for the daily digest.
     """
     from .config import load_topics, topics_by_id
+
+    # Check cache first
+    if use_cache:
+        cache_key = f"topic:{topic_id}:{days}:{limit}"
+        cached = _search_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     topics, _ = load_topics()
     by_id = topics_by_id(topics)
@@ -322,7 +378,14 @@ def search_by_topic(topic_id: str, days: int = 7, limit: int = 10) -> List[Paper
         for paper, score in ranked:
             paper.score = score
 
-    return unique[:limit]
+    result = unique[:limit]
+
+    # Cache the result
+    if use_cache:
+        cache_key = f"topic:{topic_id}:{days}:{limit}"
+        _search_cache.set(cache_key, result)
+
+    return result
 
 
 def search_all_sources(query: str, days: int = 30, limit: int = 10) -> List[Paper]:
