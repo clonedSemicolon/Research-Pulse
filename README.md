@@ -6,7 +6,7 @@
 
 ### Windows
 
-1. Download [install.bat](https://github.com/clonedSemicolon/Research-Pulse/releases/latest/download/install.bat)
+1. Download [install.bat](https://github.com/clonedSemicolon/Research-Pulse/releases/download/v0.5.2/install.bat)
 2. Double-click to run
 
 Or run in Command Prompt:
@@ -17,7 +17,7 @@ install.bat
 
 ### Mac / Linux
 
-1. Download [install.sh](https://github.com/clonedSemicolon/Research-Pulse/releases/latest/download/install.sh)
+1. Download [install.sh](https://github.com/clonedSemicolon/Research-Pulse/releases/download/v0.5.2/install.sh)
 2. Run:
 
 ```bash
@@ -34,7 +34,7 @@ The install scripts will:
 
 ### Windows
 
-Download [update.bat](https://github.com/clonedSemicolon/Research-Pulse/releases/latest/download/update.bat)
+Download [update.bat](https://github.com/clonedSemicolon/Research-Pulse/releases/download/v0.5.2/update.bat)
 
 ```cmd
 update.bat
@@ -42,7 +42,7 @@ update.bat
 
 ### Mac / Linux
 
-Download [update.sh](https://github.com/clonedSemicolon/Research-Pulse/releases/latest/download/update.sh)
+Download [update.sh](https://github.com/clonedSemicolon/Research-Pulse/releases/download/v0.5.2/update.sh)
 
 ```bash
 chmod +x update.sh
