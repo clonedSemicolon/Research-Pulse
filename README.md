@@ -6,13 +6,19 @@
 
 ### Windows
 
-Double-click `install.bat` or run in Command Prompt:
+1. Download: [install.bat](https://raw.githubusercontent.com/clonedSemicolon/Research-Pulse/master/install.bat)
+2. Double-click to run
+
+Or run in Command Prompt:
 
 ```cmd
 install.bat
 ```
 
 ### Mac / Linux
+
+1. Download: [install.sh](https://raw.githubusercontent.com/clonedSemicolon/Research-Pulse/master/install.sh)
+2. Run:
 
 ```bash
 chmod +x install.sh
@@ -28,11 +34,15 @@ The install scripts will:
 
 ### Windows
 
+Download: [update.bat](https://raw.githubusercontent.com/clonedSemicolon/Research-Pulse/master/update.bat)
+
 ```cmd
 update.bat
 ```
 
 ### Mac / Linux
+
+Download: [update.sh](https://raw.githubusercontent.com/clonedSemicolon/Research-Pulse/master/update.sh)
 
 ```bash
 chmod +x update.sh
