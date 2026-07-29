@@ -133,6 +133,40 @@ def remove_by_email(email: str) -> bool:
     return len(raw["subscriptions"]) < before
 
 
+def add_topic_to_subscription(email: str, topic: str) -> bool:
+    """Add a topic to an existing subscription. Returns True if updated."""
+    raw = _load_raw()
+    subs = raw.get("subscriptions", [])
+
+    for s in subs:
+        if s.get("email", "").lower() == email.lower():
+            topics = s.get("topics", [])
+            if topic not in topics:
+                topics.append(topic)
+                s["topics"] = topics
+                raw["subscriptions"] = subs
+                _save_raw(raw)
+            return True
+    return False
+
+
+def get_subscription_by_email(email: str) -> Optional[Subscription]:
+    """Get subscription by email address."""
+    raw = _load_raw()
+    for item in raw.get("subscriptions", []):
+        if item.get("email", "").lower() == email.lower():
+            return Subscription(
+                email=item.get("email", ""),
+                frequency=item.get("frequency", "daily"),
+                topics=item.get("topics", []),
+                token=item.get("token", ""),
+                confirmed=item.get("confirmed", True),
+                created_at=item.get("created_at", ""),
+                last_sent=item.get("last_sent", ""),
+            )
+    return None
+
+
 def is_due(sub: Subscription) -> bool:
     """Check whether a subscription should be sent today."""
     if not sub.last_sent:

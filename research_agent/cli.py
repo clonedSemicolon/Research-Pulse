@@ -343,6 +343,17 @@ def cmd_follow(args: List[str]) -> int:
         save(current, source="follow")
     ui.info("Added to your daily digest")
 
+    # Also add to subscription if exists
+    from .subscription import add_topic_to_subscription, load_subscriptions
+    subs = load_subscriptions()
+    if subs:
+        # Update all subscriptions with the new topic
+        for sub in subs:
+            add_topic_to_subscription(sub.email, match)
+        ui.info(f"Updated {len(subs)} subscription(s) with new topic")
+    else:
+        ui.info("No active subscriptions. Run 'research-pulse subscribe <email>' to subscribe.")
+
     from .search import search_by_topic
     from .agent import display_papers
 
@@ -526,6 +537,13 @@ def cmd_subscribe(args: List[str]) -> int:
     labels = topics_by_id(topics_list)
     saved_topics = get_topics()
 
+    # Add custom topics that are in saved_topics but not in topics_list
+    custom_topics = [t for t in saved_topics if t not in labels]
+    for ct in custom_topics:
+        # Create a simple label from the topic ID
+        label = ct.replace("-", " ").title()
+        labels[ct] = type('Topic', (), {'id': ct, 'label': label})()
+
     # Topic selection
     ui.rule("Your topics")
     if saved_topics:
@@ -535,9 +553,11 @@ def cmd_subscribe(args: List[str]) -> int:
         ui.info("  Enter = use your saved topics")
         ui.info("  'all' = subscribe to all topics")
         ui.info("  Numbers = pick specific topics (e.g. 1,3,5)\n")
-        for i, t in enumerate(topics_list, 1):
+        all_topics = topics_list + [labels[ct] for ct in custom_topics]
+        for i, t in enumerate(all_topics, 1):
             marker = " ✓" if t.id in saved_topics else ""
-            ui.info(f"  {i:2d}. {t.label}{marker}")
+            is_custom = " (custom)" if t.id in custom_topics else ""
+            ui.info(f"  {i:2d}. {t.label}{is_custom}{marker}")
         print()
         try:
             topic_choice = ui.prompt("Topics (Enter for saved) › ").strip()
@@ -548,14 +568,14 @@ def cmd_subscribe(args: List[str]) -> int:
         if topic_choice == "":
             selected_topics = saved_topics
         elif topic_choice.lower() == "all":
-            selected_topics = [t.id for t in topics_list]
+            selected_topics = [t.id for t in all_topics]
         else:
             try:
                 indices = [int(x.strip()) - 1 for x in topic_choice.split(",")]
                 selected_topics = []
                 for idx in indices:
-                    if 0 <= idx < len(topics_list):
-                        selected_topics.append(topics_list[idx].id)
+                    if 0 <= idx < len(all_topics):
+                        selected_topics.append(all_topics[idx].id)
                     else:
                         ui.error(f"Invalid choice: {idx + 1}")
                         return 1

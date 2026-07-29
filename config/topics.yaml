@@ -262,6 +262,15 @@ topics:
     openalex: "agriculture food science"
     europepmc: "agriculture crop science"
 
+  - id: test-custom-topic
+    label: "Test Custom Topic"
+    keywords: ["test", "custom", "topic"]
+    arxiv: []
+    biorxiv: []
+    openalex: "test custom topic"
+    semanticscholar: "test custom topic"
+    europepmc: "test custom topic"
+
 # Research-industry / community news. Pulled via RSS and shown in a shared
 # "What's happening in research" section for every subscriber.
 news_feeds:
