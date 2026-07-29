@@ -1,7 +1,7 @@
 """Local user preferences (topics, etc.) stored in data/local.json.
 
-First run auto-detects topics from Zotero when available, otherwise uses
-sensible defaults. After that, just run `research-pulse` with no flags.
+First run requires users to select their topics. No default topics are set.
+After that, just run `research-pulse` with no flags.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import List, Optional
 from .config import ROOT, load_topics, topics_by_id
 
 LOCAL_PATH = ROOT / "data" / "local.json"
-DEFAULT_TOPICS = ["ai-ml", "nlp"]
+DEFAULT_TOPICS = []  # No default topics - users must select their own
 MIN_PAPERS_PER_TOPIC = 1
 MAX_PAPERS_PER_TOPIC = 25
 
@@ -97,7 +97,7 @@ def effective_papers_per_topic() -> int:
 
 
 def ensure_ready(verbose: bool = True, force_zotero: bool = False) -> List[str]:
-    """Return topic list; auto-configure silently on first run.
+    """Return topic list; return empty if no topics are set.
 
     If force_zotero is True, re-detect from Zotero and save (when available).
     Manual topic choices (source=manual or follow) are never overwritten unless
@@ -113,7 +113,7 @@ def ensure_ready(verbose: bool = True, force_zotero: bool = False) -> List[str]:
         return existing
 
     # First run or explicit Zotero re-sync
-    if force_zotero or not existing:
+    if force_zotero:
         source = "default"
         chosen: List[str] = []
 
@@ -128,20 +128,18 @@ def ensure_ready(verbose: bool = True, force_zotero: bool = False) -> List[str]:
         except Exception:
             pass
 
-        if not chosen:
-            chosen = list(DEFAULT_TOPICS)
-            source = "default"
+        if chosen:
+            save(chosen, source=source)
 
-        save(chosen, source=source)
+            if verbose:
+                from . import ui
+                labels = topics_by_id(load_topics()[0])
+                names = [labels[t].label if t in labels else t for t in chosen]
+                where = "Zotero library" if source == "zotero" else "defaults"
+                ui.info(f"Topics from {where}: {', '.join(names)}")
+                ui.info("Change anytime: research-pulse topics")
 
-        if verbose:
-            from . import ui
-            labels = topics_by_id(load_topics()[0])
-            names = [labels[t].label if t in labels else t for t in chosen]
-            where = "Zotero library" if source == "zotero" else "defaults"
-            ui.info(f"Topics from {where}: {', '.join(names)}")
-            ui.info("Change anytime: research-pulse topics")
+            return chosen
 
-        return chosen
-
-    return existing
+    # No topics set - return empty list
+    return []

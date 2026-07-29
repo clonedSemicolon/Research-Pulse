@@ -77,6 +77,15 @@ def cmd_today(open_browser: bool = True) -> int:
     """Fetch and show today's digest using saved topics."""
     ui.banner()
     topics = _resolve_digest_topics()
+
+    # If no topics are set, prompt user to select
+    if not topics:
+        ui.rule("Welcome to ResearchPulse!")
+        ui.info("You haven't selected any topics yet.")
+        ui.info("Run 'research-pulse topics' to select your research interests.\n")
+        ui.info("Or follow a topic: research-pulse follow \"your research area\"")
+        return 0
+
     topics_list, _ = load_topics()
     labels = topics_by_id(topics_list)
     names = [labels[t].label if t in labels else t for t in topics]
