@@ -137,6 +137,13 @@ class Secrets:
     gemini_api_key: str
     ollama_host: str
     ollama_model: str
+    # Backup SMTP (optional, for fallback)
+    smtp_host_backup: str = ""
+    smtp_port_backup: int = 587
+    smtp_user_backup: str = ""
+    smtp_key_backup: str = ""
+    # Admin token for private commands
+    admin_token: str = ""
 
 
 def load_topics(path: Optional[Path] = None) -> Tuple[List[Topic], List[NewsFeed]]:
@@ -189,6 +196,13 @@ def load_secrets() -> Secrets:
         gemini_api_key=os.environ.get("GEMINI_API_KEY", "").strip(),
         ollama_host=os.environ.get("OLLAMA_HOST", "").strip().rstrip("/"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.2").strip(),
+        # Backup SMTP (optional)
+        smtp_host_backup=os.environ.get("SMTP_HOST_BACKUP", "").strip(),
+        smtp_port_backup=int(os.environ.get("SMTP_PORT_BACKUP", "587") or "587"),
+        smtp_user_backup=os.environ.get("SMTP_USER_BACKUP", "").strip(),
+        smtp_key_backup=os.environ.get("SMTP_KEY_BACKUP", "").strip(),
+        # Admin token for private commands
+        admin_token=os.environ.get("RP_ADMIN_TOKEN", "").strip(),
     )
 
 

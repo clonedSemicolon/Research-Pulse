@@ -2,7 +2,52 @@
 
 **Your daily pulse on research.** A free, open-source agent that fetches new papers in your fields and opens them in your browser.
 
-## Install
+## Quick Install (Recommended)
+
+### Windows
+
+Double-click `install.bat` or run in Command Prompt:
+
+```cmd
+install.bat
+```
+
+### Mac / Linux
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The install scripts will:
+- Check if Python is installed
+- Install Python automatically if missing
+- Install ResearchPulse
+
+## Update
+
+### Windows
+
+```cmd
+update.bat
+```
+
+### Mac / Linux
+
+```bash
+chmod +x update.sh
+./update.sh
+```
+
+Or manually:
+
+```bash
+pip install research-pulse --upgrade
+```
+
+## Manual Install
+
+If you already have Python installed:
 
 ```bash
 pip install research-pulse
@@ -49,6 +94,29 @@ research-pulse chat                     # Interactive agent
 research-pulse help                     # All commands
 ```
 
+## Email Newsletter
+
+ResearchPulse includes a built-in email newsletter system.
+
+### Subscribe
+
+```bash
+research-pulse subscribe                    # Interactive - choose topics, frequency, email
+research-pulse subscribe email@example.com  # Quick subscribe with saved topics
+```
+
+Frequencies available:
+- Every 3 days
+- Weekly
+- Biweekly (every 2 weeks)
+- Monthly
+
+### Unsubscribe
+
+```bash
+research-pulse unsubscribe                  # Interactive unsubscribe
+```
+
 ## What it does
 
 - Fetches papers from **arXiv, OpenAlex, Europe PMC, bioRxiv, Crossref, Semantic Scholar**
@@ -59,6 +127,7 @@ research-pulse help                     # All commands
 - Follow any field: `research-pulse follow "quantum computing"`
 - **Conference metadata**: venue name, year, and CORE rank (A*, A, B, C) on each paper
 - **Filter by conference**: `--venue neurips`, `--core A`, `--year 2024` on search
+- **Email newsletters**: Automated paper digests sent to subscribers
 
 ## Conference filtering
 
@@ -133,6 +202,31 @@ Inside the agent:
 ```bash
 research-pulse add-topic --id data-science --label "Data Science" --keywords "data,analytics,visualization" --arxiv "stat.ML,cs.DB"
 ```
+
+## Changelog
+
+### v0.5.1 (Latest)
+
+**New Features:**
+- Email newsletter system with SMTP support.
+- Subscribe command with topic selection: `research-pulse subscribe`
+- Quick subscribe with email: `research-pulse subscribe email@example.com`
+- Automatic SMTP failover (primary → backup)
+- Configurable delivery frequency (3 days, weekly, biweekly, monthly)
+- Email templates with responsive HTML design
+- Unsubscribe links in every email
+
+**Improvements:**
+- Topic selection now shows saved topics with checkmark
+- Better error messages for unauthorized access
+
+### v0.5.0
+
+- Desktop application with dark mode
+- Paper rating and reading history
+- CORE conference rankings
+- Zotero integration
+- 31 built-in research domains
 
 ## License
 

@@ -48,6 +48,7 @@ preview/
 data/local.json
 data/memory.json
 data/seen.json
+data/subscriptions.json
 
 # Keep an empty seed so `data/` exists in fresh clones (optional reference)
 !data/seen.json.example

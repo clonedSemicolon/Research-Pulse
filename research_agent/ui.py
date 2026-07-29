@@ -54,6 +54,8 @@ CLI_COMMANDS: List[Tuple[str, str, str]] = [
     ("conferences", "CORE venue list", "Ranked conferences & journals"),
     ('follow "field"', "Follow any topic", "Plain English, no config"),
     ("topics", "Manage topics", "View or pick from 31+ domains"),
+    ("subscribe <email>", "Subscribe to newsletter", "Uses your saved topics"),
+    ("unsubscribe", "Unsubscribe", "Remove from mailing list"),
     ("config papers N", "Digest size", "Set papers per topic (1–25, default 5)"),
     ("desktop", "Desktop app", "Launch the GUI application"),
     ("chat", "Interactive agent", "Compare, insights, memory"),

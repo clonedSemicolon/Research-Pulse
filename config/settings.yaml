@@ -1,7 +1,7 @@
 # Runtime settings for ResearchPulse. Safe to edit and commit (no secrets here).
 
 # How many papers to include per topic in each digest.
-papers_per_topic: 5
+papers_per_topic: 20
 
 # How many research-news items to include in the shared "What's happening" block.
 news_items: 5

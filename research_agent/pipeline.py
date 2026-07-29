@@ -34,6 +34,7 @@ from .render import render_digest
 from .summarize import Summarizer
 from .subscribers import Subscriber, load_subscribers
 from .sources import arxiv, biorxiv, europepmc, openalex, rss, semanticscholar
+from .subscription import get_due_subscriptions, mark_sent
 
 PREVIEW_DIR = cfg.ROOT / "preview"
 
@@ -130,11 +131,29 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         from .local_config import effective_papers_per_topic
         papers_limit = effective_papers_per_topic()
 
+    local_subs_tokens: List[str] = []
+
     if topic_override:
         subscribers = [Subscriber(email="local@preview", topics=topic_override)]
         log.info("local preview mode with topics: %s", topic_override)
     else:
         subscribers = load_subscribers(secrets)
+
+        due_local = get_due_subscriptions()
+        if due_local:
+            for ls in due_local:
+                subscribers.append(Subscriber(
+                    email=ls.email,
+                    topics=ls.topics,
+                    token=ls.token,
+                ))
+                local_subs_tokens.append(ls.token)
+            log.info(
+                "%d due local subscription(s): %s",
+                len(due_local),
+                ", ".join(f"{s.email}[{s.frequency}]" for s in due_local),
+            )
+
         if limit_subscribers:
             subscribers = subscribers[:limit_subscribers]
     log.info("%d confirmed subscriber(s)", len(subscribers))
@@ -198,6 +217,7 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
 
     subject = f"{settings.newsletter_name}: your research digest - {datetime.now():%b %d}"
     sent_topic_ids: Set[str] = set()
+    sent_local_tokens: Set[str] = set()
     with mailer:
         for sub in subscribers:
             html = render_digest(
@@ -206,7 +226,14 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
             if mailer.send(sub.email, subject, html):
                 sent += 1
                 sent_topic_ids.update(sub.topics)
+                if sub.token and sub.token in local_subs_tokens:
+                    sent_local_tokens.add(sub.token)
             time.sleep(0.5)
+
+    for token in sent_local_tokens:
+        mark_sent(token)
+    if sent_local_tokens:
+        log.info("updated last_sent for %d local subscription(s)", len(sent_local_tokens))
 
     log.info("sent %d/%d digest(s)", sent, len(subscribers))
 

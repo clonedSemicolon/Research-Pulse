@@ -410,6 +410,355 @@ def cmd_config(args: List[str]) -> int:
     return 1
 
 
+def _mask_email(email: str) -> str:
+    """Show only the first character before @ and one * per hidden char."""
+    if "@" not in email:
+        return "***"
+    local, _, domain = email.partition("@")
+    if len(local) <= 1:
+        return f"*@{domain}"
+    return f"{local[0]}{'*' * (len(local) - 1)}@{domain}"
+
+
+def cmd_subscriber(args: List[str]) -> int:
+    """Manage subscribers (admin only)."""
+    from .subscription import (
+        FREQUENCY_LABELS,
+        load_subscriptions,
+    )
+    from .config import load_secrets
+
+    secrets = load_secrets()
+
+    if not args:
+        ui.banner("Subscriber Management")
+        ui.info("Usage:")
+        ui.info("  research-pulse subscriber list <admin_token>   View all subscribers")
+        ui.info("  research-pulse subscriber count                Show subscriber count")
+        return 0
+
+    # ── List subscribers (admin only) ───────────────────────────────
+    if args[0] in ("list", "show", "status"):
+        if len(args) < 2 or args[1] != secrets.admin_token:
+            ui.error("Unauthorized. Usage: research-pulse subscriber list <admin_token>")
+            ui.info("The token must match RP_ADMIN_TOKEN in your .env file.")
+            return 1
+
+        subs = load_subscriptions()
+        if not subs:
+            ui.info("No active subscriptions.")
+            return 0
+        ui.info(f"{len(subs)} active subscription(s):")
+        for s in subs:
+            freq = FREQUENCY_LABELS.get(s.frequency, s.frequency)
+            topics_str = ", ".join(s.topics) if s.topics else "local topics"
+            last = s.last_sent[:10] if s.last_sent else "never"
+            ui.info(f"  {s.email}  ·  {freq}  ·  topics: {topics_str}  ·  last sent: {last}")
+        return 0
+
+    # ── Count ───────────────────────────────────────────────────────
+    if args[0] in ("count", "total"):
+        from .subscription import subscription_count
+        count = subscription_count()
+        ui.info(f"{count} active subscription(s)")
+        return 0
+
+    ui.error(f"Unknown command: {args[0]}")
+    ui.info("Usage: research-pulse subscriber list <admin_token>")
+    return 1
+
+
+def cmd_subscribe(args: List[str]) -> int:
+    """Subscribe to research digests on a schedule."""
+    from .subscription import (
+        FREQUENCY_LABELS,
+        FREQUENCY_DAYS,
+        add_subscription,
+        load_subscriptions,
+        remove_subscription,
+        subscription_count,
+    )
+
+    # ── Unsubscribe flow ────────────────────────────────────────────
+    if args and args[0] in ("unsubscribe", "remove", "delete"):
+        return _cmd_unsubscribe(args[1:])
+
+    # ── Quick subscribe with email ──────────────────────────────────
+    if args and "@" in args[0]:
+        email = args[0]
+        topics_list, _ = load_topics()
+        labels = topics_by_id(topics_list)
+        saved_topics = get_topics()
+
+        if not saved_topics:
+            ui.error("No topics configured. Run 'research-pulse setup' first.")
+            return 1
+
+        # Use saved topics and default frequency
+        frequency = "3days"
+        saved_labels = [labels[t].label for t in saved_topics if t in labels]
+
+        ui.banner("Subscribe to ResearchPulse")
+        ui.info(f"  Email:     {email}")
+        ui.info(f"  Frequency: Every 3 days")
+        ui.info(f"  Topics:    {', '.join(saved_labels)}")
+        print()
+
+        try:
+            confirm = ui.prompt("Confirm subscription? (y/n) › ").lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if confirm not in ("y", "yes"):
+            ui.info("Cancelled.")
+            return 0
+
+        add_subscription(email, frequency, saved_topics)
+        ui.success(f"Subscribed {email} to every 3 days digests!")
+        ui.info(f"Topics: {', '.join(saved_labels)}")
+        ui.info(f"First digest will arrive within 3 day(s).")
+        return 0
+
+    # ── Interactive subscribe flow ──────────────────────────────────
+    ui.banner("Subscribe to ResearchPulse")
+
+    topics_list, _ = load_topics()
+    labels = topics_by_id(topics_list)
+    saved_topics = get_topics()
+
+    # Topic selection
+    ui.rule("Your topics")
+    if saved_topics:
+        saved_labels = [labels[t].label for t in saved_topics if t in labels]
+        ui.info(f"Your saved topics: {', '.join(saved_labels)}")
+        ui.info("\nOptions:")
+        ui.info("  Enter = use your saved topics")
+        ui.info("  'all' = subscribe to all topics")
+        ui.info("  Numbers = pick specific topics (e.g. 1,3,5)\n")
+        for i, t in enumerate(topics_list, 1):
+            marker = " ✓" if t.id in saved_topics else ""
+            ui.info(f"  {i:2d}. {t.label}{marker}")
+        print()
+        try:
+            topic_choice = ui.prompt("Topics (Enter for saved) › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+
+        if topic_choice == "":
+            selected_topics = saved_topics
+        elif topic_choice.lower() == "all":
+            selected_topics = [t.id for t in topics_list]
+        else:
+            try:
+                indices = [int(x.strip()) - 1 for x in topic_choice.split(",")]
+                selected_topics = []
+                for idx in indices:
+                    if 0 <= idx < len(topics_list):
+                        selected_topics.append(topics_list[idx].id)
+                    else:
+                        ui.error(f"Invalid choice: {idx + 1}")
+                        return 1
+            except ValueError:
+                ui.error("Enter numbers separated by commas, 'all', or press Enter for saved topics.")
+                return 1
+    else:
+        ui.info("Select topics you want to receive papers about.")
+        ui.info("Enter topic numbers separated by commas (e.g. 1,3,5) or 'all' for everything.\n")
+        for i, t in enumerate(topics_list, 1):
+            ui.info(f"  {i:2d}. {t.label}")
+        print()
+        try:
+            topic_choice = ui.prompt("Topics › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+
+        if topic_choice.lower() == "all":
+            selected_topics = [t.id for t in topics_list]
+        else:
+            try:
+                indices = [int(x.strip()) - 1 for x in topic_choice.split(",")]
+                selected_topics = []
+                for idx in indices:
+                    if 0 <= idx < len(topics_list):
+                        selected_topics.append(topics_list[idx].id)
+                    else:
+                        ui.error(f"Invalid choice: {idx + 1}")
+                        return 1
+            except ValueError:
+                ui.error("Enter numbers separated by commas or 'all'.")
+                return 1
+
+    if not selected_topics:
+        ui.error("No topics selected.")
+        return 1
+
+    selected_labels = [labels[t].label for t in selected_topics if t in labels]
+
+    # Frequency
+    ui.rule("Delivery frequency")
+    freq_opts = list(FREQUENCY_LABELS.items())
+    for i, (key, label) in enumerate(freq_opts, 1):
+        ui.info(f"  {i}. {label}")
+    try:
+        choice = ui.prompt("Choose frequency (1-4) › ")
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(freq_opts):
+            ui.error("Invalid choice.")
+            return 1
+        frequency = freq_opts[idx][0]
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    except (ValueError, IndexError):
+        ui.error("Enter a number (1-4).")
+        return 1
+
+    # Email
+    email = ""
+    try:
+        email = ui.prompt("Your email address › ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    if not email or "@" not in email:
+        ui.error("Please enter a valid email address.")
+        return 1
+
+    # Confirm
+    freq_label = FREQUENCY_LABELS.get(frequency, frequency)
+    print()
+    ui.info(f"  Email:     {email}")
+    ui.info(f"  Frequency: {freq_label}")
+    ui.info(f"  Topics:    {', '.join(selected_labels)}")
+    try:
+        confirm = ui.prompt("Confirm subscription? (y/n) › ").lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    if confirm not in ("y", "yes"):
+        ui.info("Cancelled.")
+        return 0
+
+    add_subscription(email, frequency, selected_topics)
+
+    ui.success(f"Subscribed {email} to {freq_label.lower()} digests!")
+    ui.info(f"Topics: {', '.join(selected_labels)}")
+    ui.info(f"First digest will arrive within {FREQUENCY_DAYS[frequency]} day(s).")
+    ui.info("Manage: research-pulse subscribe list")
+    return 0
+
+
+def _cmd_unsubscribe(args: List[str]) -> int:
+    from .subscription import load_subscriptions, remove_subscription, remove_by_email
+
+    subs = load_subscriptions()
+    if not subs:
+        ui.info("No active subscriptions to remove.")
+        return 0
+
+    if args:
+        target = args[0]
+        if "@" in target:
+            if remove_by_email(target):
+                ui.success(f"Unsubscribed {_mask_email(target)}")
+            else:
+                ui.warn(f"No subscription found for {_mask_email(target)}")
+            return 0
+        else:
+            if remove_subscription(target):
+                ui.success(f"Unsubscribed (token: {target})")
+            else:
+                ui.warn(f"No subscription found with token: {target}")
+            return 0
+
+    ui.banner("Unsubscribe")
+    ui.info(f"{len(subs)} subscription(s) on file.")
+    try:
+        email = ui.prompt("Enter the email address to unsubscribe › ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    if not email or "@" not in email:
+        ui.warn("Cancelled.")
+        return 0
+
+    if remove_by_email(email):
+        ui.success(f"Unsubscribed {_mask_email(email)}")
+    else:
+        ui.warn(f"No subscription found for {_mask_email(email)}")
+    return 0
+
+
+def cmd_test_email(args: List[str]) -> int:
+    """Send a test email to verify delivery. Private command — requires admin token."""
+    from .config import load_secrets
+
+    secrets = load_secrets()
+
+    # Gate: require admin token as first argument
+    if not args or args[0] != secrets.admin_token:
+        ui.error("Unauthorized. Usage: research-pulse test-email <token> [recipient]")
+        ui.info("The token must match RP_ADMIN_TOKEN in your .env file.")
+        return 1
+
+    # Determine recipient: second arg or default to sender email
+    target = args[1] if len(args) > 1 else "aurgho1998@gmail.com"
+
+    subject = f"ResearchPulse Test Email — {__import__('datetime').datetime.now():%Y-%m-%d %H:%M}"
+    html = """\
+<html>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; text-align: center;">
+    <h1 style="margin: 0;">ResearchPulse</h1>
+    <p style="margin: 10px 0 0 0; opacity: 0.9;">Email Delivery Test</p>
+  </div>
+  <div style="padding: 20px; background: #f8f9fa; border-radius: 10px; margin-top: 20px;">
+    <h2 style="color: #333;">Test Successful!</h2>
+    <p style="color: #666;">If you're reading this, your email sending configuration is working correctly.</p>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+      <tr><td style="padding: 8px; border-bottom: 1px solid #ddd; font-weight: bold;">SMTP Host</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">{host}</td></tr>
+      <tr><td style="padding: 8px; border-bottom: 1px solid #ddd; font-weight: bold;">Sender</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">{sender}</td></tr>
+      <tr><td style="padding: 8px; border-bottom: 1px solid #ddd; font-weight: bold;">Recipient</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">{recipient}</td></tr>
+      <tr><td style="padding: 8px; font-weight: bold;">Timestamp</td><td style="padding: 8px;">{timestamp}</td></tr>
+    </table>
+  </div>
+  <p style="text-align: center; color: #999; margin-top: 20px; font-size: 12px;">
+    ResearchPulse — Daily Research Digest<br>
+    <a href="https://researchpulse.online" style="color: #667eea;">researchpulse.online</a>
+  </p>
+</body>
+</html>
+""".format(
+        host=secrets.smtp_host,
+        sender=secrets.sender_email,
+        recipient=target,
+        timestamp=__import__('datetime').datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+
+    from .mailer import Mailer
+
+    ui.banner("Email Delivery Test")
+
+    mailer = Mailer(secrets)
+    if not mailer.configured:
+        ui.error("SMTP not configured. Check SMTP_HOST, SMTP_USER, SMTP_KEY, SENDER_EMAIL in .env")
+        return 1
+
+    with mailer:
+        ui.info(f"Sending test email to: {target}")
+        ui.info(f"Using SMTP: {secrets.smtp_host}:{secrets.smtp_port}")
+        success = mailer.send(target, subject, html)
+
+    if success:
+        ui.success(f"Test email sent successfully to {target}")
+        ui.info("Check your inbox (and spam folder) for the test email.")
+    else:
+        ui.error("Failed to send test email. Check SMTP credentials and try again.")
+    return 0 if success else 1
+
+
 def cmd_add_topic(args: List[str]) -> int:
     """Add a new topic to config/topics.yaml."""
     parser = argparse.ArgumentParser(prog="research-pulse add-topic", add_help=False)
@@ -486,6 +835,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if cmd in ("follow", "add"):
         return cmd_follow(rest)
 
+    if cmd in ("subscribe", "sub"):
+        return cmd_subscribe(rest)
+
+    if cmd in ("unsubscribe", "unsub"):
+        return _cmd_unsubscribe(rest)
+
+    if cmd in ("subscriber", "subscribers"):
+        return cmd_subscriber(rest)
+
     if cmd in ("chat", "agent"):
         from .agent import run_agent
         return run_agent()
@@ -495,6 +853,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "add-topic":
         return cmd_add_topic(rest)
+
+    if cmd == "test-email":
+        return cmd_test_email(rest)
 
     if cmd in ("desktop", "gui", "app"):
         try:
