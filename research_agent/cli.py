@@ -339,9 +339,40 @@ def cmd_follow(args: List[str]) -> int:
 
     current = get_topics()
     if match not in current:
-        current.append(match)
-        save(current, source="follow")
-    ui.info("Added to your daily digest")
+        # Ask user if they want to replace or add
+        if current:
+            current_labels = []
+            labels_map = topics_by_id(load_topics()[0])
+            for t in current:
+                if t in labels_map:
+                    current_labels.append(labels_map[t].label)
+                else:
+                    current_labels.append(t.replace("-", " ").title())
+            ui.info(f"\nCurrent topics: {', '.join(current_labels)}")
+            ui.info("\nOptions:")
+            ui.info("  1 = Replace all topics with this one")
+            ui.info("  2 = Add to existing topics")
+            try:
+                choice = ui.prompt("Choose (1 or 2) › ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 0
+
+            if choice == "1":
+                # Replace all topics
+                save([match], source="follow")
+                ui.info(f"Replaced all topics with: {phrase.title()}")
+            else:
+                # Add to existing topics
+                current.append(match)
+                save(current, source="follow")
+                ui.info(f"Added {phrase.title()} to your topics")
+        else:
+            # No existing topics, just set this one
+            save([match], source="follow")
+            ui.info(f"Set topic: {phrase.title()}")
+    else:
+        ui.info("Already following this topic")
 
     # Also add to subscription if exists
     from .subscription import add_topic_to_subscription, load_subscriptions

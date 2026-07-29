@@ -34,7 +34,9 @@ def _write_local(data: dict) -> None:
 
 def save(topics: List[str], source: str = "manual") -> bool:
     """Persist the user's topic choices. Returns False if every id was invalid."""
-    valid = set(topics_by_id(load_topics()[0]).keys())
+    # Load all topics including custom ones from topics.yaml
+    topics_list, _ = load_topics()
+    valid = set(t.id for t in topics_list)
     cleaned = [t for t in topics if t in valid]
     if topics and not cleaned:
         return False

@@ -271,6 +271,24 @@ topics:
     semanticscholar: "test custom topic"
     europepmc: "test custom topic"
 
+  - id: machine-learning-for-healthcare
+    label: "Machine Learning For Healthcare"
+    keywords: ["machine", "learning", "for", "healthcare"]
+    arxiv: []
+    biorxiv: []
+    openalex: "machine learning for healthcare"
+    semanticscholar: "machine learning for healthcare"
+    europepmc: "machine learning for healthcare"
+
+  - id: artificial-intelligence
+    label: "Artificial Intelligence"
+    keywords: ["artificial", "intelligence"]
+    arxiv: []
+    biorxiv: []
+    openalex: "artificial intelligence"
+    semanticscholar: "artificial intelligence"
+    europepmc: "artificial intelligence"
+
 # Research-industry / community news. Pulled via RSS and shown in a shared
 # "What's happening in research" section for every subscriber.
 news_feeds:
