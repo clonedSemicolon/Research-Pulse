@@ -12,12 +12,10 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # trusted publishing to PyPI
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +35,8 @@ jobs:
       - name: Publish to PyPI
         if: ${{ !inputs.dry_run && github.event_name == 'release' }}
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Upload artifacts (dry run)
         if: ${{ inputs.dry_run || github.event_name != 'release' }}
