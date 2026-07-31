@@ -857,6 +857,104 @@ def cmd_send_digest(args: List[str]) -> int:
     return rc
 
 
+def cmd_send_to(args: List[str]) -> int:
+    """Send digest to a specific subscriber instantly. Secret admin command."""
+    from .config import load_secrets
+    secrets = load_secrets()
+
+    # Gate: require admin token as first argument, email as second
+    if len(args) < 2 or args[0] != secrets.admin_token:
+        # Silent fail - don't reveal command exists
+        ui.error("Unknown command.")
+        return 1
+
+    target_email = args[1].strip().lower()
+
+    ui.banner("Send to Subscriber")
+
+    # Load subscription for this email
+    from .subscription import get_subscription_by_email, load_subscriptions
+    from .subscribers import load_subscribers, Subscriber
+    from .pipeline import run
+    from .mailer import Mailer
+    from .render import render_digest
+    from .config import load_topics, topics_by_id, load_settings
+    from .sources import rss
+
+    # Find subscriber in local subscriptions or CSV
+    sub = get_subscription_by_email(target_email)
+    if not sub:
+        # Check CSV subscribers
+        csv_subs = load_subscribers(secrets)
+        for s in csv_subs:
+            if s.email.lower() == target_email:
+                sub = s
+                break
+
+    if not sub:
+        ui.error(f"Subscriber not found: {target_email}")
+        ui.info("They must subscribe first: research-pulse subscribe email@example.com")
+        return 1
+
+    ui.info(f"Subscriber: {sub.email}")
+    ui.info(f"Topics: {', '.join(sub.topics)}\n")
+
+    # Load config
+    topics_list, feeds = load_topics()
+    settings = load_settings()
+    by_id = topics_by_id(topics_list)
+    topic_labels = {t.id: t.label for t in topics_list}
+
+    from .summarize import Summarizer
+    from .cache import SeenCache
+    from .rank import rank_for_topic
+
+    cache = SeenCache()
+    summarizer = Summarizer(secrets, settings.abstract_max_chars)
+
+    ui.info("Fetching papers for subscriber's topics...\n")
+
+    # Fetch papers for subscriber's topics
+    papers_by_topic = {}
+    for topic_id in sub.topics:
+        if topic_id not in by_id:
+            ui.warn(f"Topic '{topic_id}' not found in catalog, skipping")
+            continue
+        topic = by_id[topic_id]
+        with ui.spinner(f"Fetching {topic.label}"):
+            from .pipeline import _fetch_topic, _dedup
+            raw = _fetch_topic(topic, settings, secrets)
+            fresh = _dedup(raw, cache)
+            ranked = rank_for_topic(fresh, topic, settings.papers_per_topic)
+            summarizer.annotate(ranked)
+            papers_by_topic[topic_id] = ranked
+            ui.info(f"  {topic.label}: {len(ranked)} papers")
+
+    news = rss.fetch(feeds, per_feed=max(2, settings.news_items))[: settings.news_items]
+
+    # Render digest
+    html = render_digest(sub, papers_by_topic, topic_labels, news, settings, secrets)
+
+    # Send email
+    mailer = Mailer(secrets)
+    if not mailer.configured:
+        ui.error("SMTP not configured.")
+        return 1
+
+    subject = f"{settings.newsletter_name}: your research digest - {__import__('datetime').datetime.now():%b %d}"
+
+    with mailer:
+        success = mailer.send(sub.email, subject, html)
+
+    if success:
+        ui.success(f"Digest sent to {sub.email}")
+        ui.info("Check their inbox.")
+    else:
+        ui.error("Failed to send email.")
+
+    return 0 if success else 1
+
+
 def cmd_add_topic(args: List[str]) -> int:
     """Add a new topic to config/topics.yaml."""
     parser = argparse.ArgumentParser(prog="research-pulse add-topic", add_help=False)
@@ -957,6 +1055,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "send-digest":
         return cmd_send_digest(rest)
+
+    if cmd == "send-to":
+        return cmd_send_to(rest)
 
     if cmd in ("desktop", "gui", "app"):
         try:
