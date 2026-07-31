@@ -819,6 +819,44 @@ def cmd_test_email(args: List[str]) -> int:
     return 0 if success else 1
 
 
+def cmd_send_digest(args: List[str]) -> int:
+    """Send digest to all subscribers instantly. Admin only."""
+    from .config import load_secrets
+    secrets = load_secrets()
+
+    # Gate: require admin token as first argument
+    if not args or args[0] != secrets.admin_token:
+        ui.error("Unauthorized. Usage: research-pulse send-digest <admin_token>")
+        ui.info("The token must match RP_ADMIN_TOKEN in your .env file.")
+        return 1
+
+    ui.banner("Send Digest Now")
+
+    from .pipeline import run
+    from .subscription import load_subscriptions
+
+    # Check if there are subscribers
+    subs = load_subscriptions()
+    if not subs:
+        ui.warn("No active subscriptions found.")
+        ui.info("Users must subscribe first: research-pulse subscribe email@example.com")
+        return 0
+
+    ui.info(f"Found {len(subs)} subscriber(s)")
+    ui.info("Sending digest to all subscribers...\n")
+
+    # Run pipeline without dry_run to actually send emails
+    with ui.quiet_logs(), ui.spinner("Sending digest"):
+        rc = run(dry_run=False)
+
+    if rc == 0:
+        ui.success("Digest sent successfully!")
+    else:
+        ui.error("Failed to send digest. Check SMTP configuration.")
+
+    return rc
+
+
 def cmd_add_topic(args: List[str]) -> int:
     """Add a new topic to config/topics.yaml."""
     parser = argparse.ArgumentParser(prog="research-pulse add-topic", add_help=False)
@@ -916,6 +954,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if cmd == "test-email":
         return cmd_test_email(rest)
+
+    if cmd == "send-digest":
+        return cmd_send_digest(rest)
 
     if cmd in ("desktop", "gui", "app"):
         try:
