@@ -2,7 +2,7 @@
 
 import sys as _sys
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 
 
 def _force_utf8_console() -> None:
