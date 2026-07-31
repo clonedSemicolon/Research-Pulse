@@ -106,7 +106,7 @@ research-pulse help                     # All commands
 
 ## Email Newsletter
 
-ResearchPulse includes a built-in email newsletter system.
+ResearchPulse includes a built-in email newsletter system with per-subscriber topic and frequency configuration.
 
 ### Subscribe
 
@@ -124,8 +124,14 @@ Frequencies available:
 ### Unsubscribe
 
 ```bash
-research-pulse unsubscribe                  # Interactive unsubscribe
+research-pulse unsubscribe email@example.com  # Unsubscribe by email
 ```
+
+### How it works
+
+Each subscriber's digest contains **only the topics they chose**, delivered at **their chosen frequency**. When the daily pipeline runs, it checks each subscription's frequency window and only sends to those whose window has elapsed.
+
+Subscribers can be added via the CLI (`research-pulse subscribe`) or via the web signup page (`docs/index.html`) backed by Google Apps Script. Both sources are merged automatically during digest delivery.
 
 ## What it does
 
@@ -215,7 +221,22 @@ research-pulse add-topic --id data-science --label "Data Science" --keywords "da
 
 ## Changelog
 
-### v0.5.1 (Latest)
+### v0.5.7
+
+**Bug Fixes:**
+- Fixed subscription pipeline where duplicate emails across CSV and local sources caused topic mismatch — subscribers now correctly receive papers for all their chosen topics.
+- Fixed `mark_sent` not being called for local subscriptions when a CSV duplicate existed, causing frequency settings to be ignored.
+- Fixed `is_due()` crash when `last_sent` has no timezone info (naive datetime).
+- Fixed misleading "subscribe list" hint after subscribing — now shows correct unsubscribe and admin commands.
+
+**Improvements:**
+- Added topic merge when a subscriber exists in both CSV and local sources — union of topics is used.
+- Added warning when a subscriber has topics not in `topics.yaml` (previously silently skipped).
+- Added comprehensive CI test suite (168 assertions) that runs on every push/PR to master.
+- Tests run across Python 3.10, 3.11, and 3.12.
+- Cleaned up sample subscriber CSV.
+
+### v0.5.1
 
 **New Features:**
 - Email newsletter system with SMTP support.

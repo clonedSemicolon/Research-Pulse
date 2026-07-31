@@ -706,7 +706,7 @@ def cmd_subscribe(args: List[str]) -> int:
     ui.success(f"Subscribed {email} to {freq_label.lower()} digests!")
     ui.info(f"Topics: {', '.join(selected_labels)}")
     ui.info(f"First digest will arrive within {FREQUENCY_DAYS[frequency]} day(s).")
-    ui.info("Manage: research-pulse subscribe list")
+    ui.info("Manage: research-pulse unsubscribe <email> or research-pulse subscriber list <admin_token>")
     return 0
 
 

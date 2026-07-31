@@ -177,6 +177,9 @@ def is_due(sub: Subscription) -> bool:
     except (ValueError, TypeError):
         return True
 
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+
     days_needed = FREQUENCY_DAYS.get(sub.frequency, 1)
     now = datetime.now(timezone.utc)
     delta = (now - last).days
