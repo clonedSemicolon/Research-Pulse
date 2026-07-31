@@ -221,7 +221,7 @@ research-pulse add-topic --id data-science --label "Data Science" --keywords "da
 
 ## Changelog
 
-### v0.5.7
+### v0.5.8
 
 **Bug Fixes:**
 - Fixed subscription pipeline where duplicate emails across CSV and local sources caused topic mismatch — subscribers now correctly receive papers for all their chosen topics.
