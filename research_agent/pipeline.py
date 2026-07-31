@@ -141,13 +141,18 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
 
         due_local = get_due_subscriptions()
         if due_local:
+            # Deduplicate: don't add local subs that already exist in CSV
+            csv_emails = {s.email.lower() for s in subscribers}
             for ls in due_local:
-                subscribers.append(Subscriber(
-                    email=ls.email,
-                    topics=ls.topics,
-                    token=ls.token,
-                ))
-                local_subs_tokens.append(ls.token)
+                if ls.email.lower() not in csv_emails:
+                    subscribers.append(Subscriber(
+                        email=ls.email,
+                        topics=ls.topics,
+                        token=ls.token,
+                    ))
+                    local_subs_tokens.append(ls.token)
+                else:
+                    log.info("skipping duplicate: %s (already in CSV)", ls.email)
             log.info(
                 "%d due local subscription(s): %s",
                 len(due_local),
