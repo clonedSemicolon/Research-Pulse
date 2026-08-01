@@ -33,13 +33,29 @@ from .local_config import (
     LOCAL_PATH,
 )
 from . import ui
-from .subscribe.cli import cmd_subscribe, cmd_subscriber, cmd_send_digest, cmd_send_to
+from .subscribe.cli import (
+    cmd_subscribe,
+    cmd_subscriber,
+    cmd_send_digest,
+    cmd_send_to,
+    cmd_unsubscribe,
+)
 
 
-def _open_preview() -> None:
-    previews = sorted((ROOT / "preview").glob("*.html"))
-    if previews:
-        path = previews[0]
+def _open_preview(preferred: Optional[Path] = None) -> None:
+    """Open a digest preview in the browser.
+
+    Prefer *preferred* when it exists (local digest → local_at_preview.html).
+    Otherwise open the most recently written preview, not the first file
+    alphabetically — stale sample-subscriber previews must not win.
+    """
+    preview_dir = ROOT / "preview"
+    path = preferred if preferred and preferred.is_file() else None
+    if path is None:
+        previews = list(preview_dir.glob("*.html"))
+        if previews:
+            path = max(previews, key=lambda p: p.stat().st_mtime)
+    if path:
         try:
             if platform.system() == "Darwin":
                 subprocess.run(["open", str(path)], check=False, 
@@ -102,7 +118,7 @@ def cmd_today(open_browser: bool = True) -> int:
     if rc == 0:
         ui.success("Digest preview ready")
         if open_browser:
-            _open_preview()
+            _open_preview(ROOT / "preview" / "local_at_preview.html")
         else:
             ui.info(f"Saved to {ROOT / 'preview'}")
     else:
@@ -333,7 +349,14 @@ def cmd_follow(args: List[str]) -> int:
         if topic_id in by_id:
             match = topic_id
         else:
-            keywords = [w for w in phrase.split() if len(w) > 2][:6] or [phrase]
+            # The full phrase is the strongest relevance signal; individual
+            # words (minus stopwords like "for"/"of") catch partial matches.
+            _stop = {"a", "an", "and", "for", "from", "in", "into", "of",
+                     "on", "or", "the", "to", "using", "via", "with"}
+            words = [w for w in phrase.split()
+                     if len(w) > 2 and w.lower() not in _stop]
+            keywords = ([phrase] if len(words) > 1 else []) + words[:6]
+            keywords = keywords or [phrase]
             add_topic(
                 topic_id,
                 phrase.title(),
@@ -624,7 +647,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_subscribe(rest)
 
     if cmd in ("unsubscribe", "unsub"):
-        return _cmd_unsubscribe(rest)
+        return cmd_unsubscribe(rest)
 
     if cmd in ("subscriber", "subscribers"):
         return cmd_subscriber(rest)

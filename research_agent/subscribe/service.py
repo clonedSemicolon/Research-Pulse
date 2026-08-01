@@ -6,7 +6,7 @@ which topics to fetch, and update last_sent after delivery.
 
 from __future__ import annotations
 
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 from ..log import get as _log
 from .models import Subscriber, Subscription
@@ -38,15 +38,18 @@ def active_topic_ids(subs: List[Subscriber], known: Set[str]) -> Set[str]:
 def merge_subscribers(
     csv_subs: List[Subscriber],
     due_local: List[Subscription],
-) -> Tuple[List[Subscriber], List[str]]:
-    """Merge CSV and local subscribers, returning (subscribers, local_tokens).
+) -> Tuple[List[Subscriber], Dict[str, str]]:
+    """Merge CSV and local subscribers.
 
-    Deduplicates by email (case-insensitive). When a local subscription's
-    email matches a CSV subscriber, the local topics are merged into the CSV
-    entry. The local token is always tracked so mark_sent fires after send.
+    Returns (subscribers, local_token_by_email) where the mapping is keyed by
+    lowercase email. Deduplicates by email (case-insensitive). When a local
+    subscription's email matches a CSV subscriber, the local topics are merged
+    into the CSV entry — which keeps the CSV token for the unsubscribe link —
+    so the local token must be looked up by email (not by Subscriber.token)
+    for mark_sent/mark_failed to fire after the send.
     """
     subscribers = list(csv_subs)
-    local_subs_tokens: List[str] = []
+    local_token_by_email: Dict[str, str] = {}
     csv_emails = {s.email.lower() for s in subscribers}
 
     for ls in due_local:
@@ -63,10 +66,10 @@ def merge_subscribers(
                     merged.update(ls.topics)
                     s.topics = sorted(merged)
                     break
-            log.info("skipping duplicate: %s (already in CSV)", ls.email)
-        local_subs_tokens.append(ls.token)
+            log.info("merged duplicate into CSV entry: %s", ls.email)
+        local_token_by_email[ls.email.lower()] = ls.token
 
-    return subscribers, local_subs_tokens
+    return subscribers, local_token_by_email
 
 
 def mark_sent_batch(tokens: Set[str]) -> None:

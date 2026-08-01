@@ -343,6 +343,10 @@ def _cmd_unsubscribe(args: List[str]) -> int:
     return 0
 
 
+# Public entry point for `research-pulse unsubscribe <email|token>`.
+cmd_unsubscribe = _cmd_unsubscribe
+
+
 def cmd_send_digest(args: List[str]) -> int:
     """Send digest to all subscribers instantly. Admin only."""
     secrets = load_secrets()
@@ -365,8 +369,10 @@ def cmd_send_digest(args: List[str]) -> int:
     ui.info(f"Found {len(subs)} subscriber(s)")
     ui.info("Sending digest to all subscribers...\n")
 
+    # force_local sends to every confirmed subscription now, matching the
+    # "send to all subscribers" promise (the daily run still honors frequency).
     with ui.quiet_logs(), ui.spinner("Sending digest"):
-        rc = run(dry_run=False)
+        rc = run(dry_run=False, force_local=True)
 
     if rc == 0:
         ui.success("Digest sent successfully!")

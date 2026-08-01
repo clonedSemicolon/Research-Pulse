@@ -53,6 +53,12 @@ def load_subscriptions() -> List[Subscription]:
 
 
 def add_subscription(email: str, frequency: str, topics: List[str]) -> Subscription:
+    email = email.strip()
+    # Unknown frequencies would silently become "due every day" in is_due;
+    # normalize to the default cadence instead.
+    if frequency not in FREQUENCY_DAYS:
+        frequency = "3days"
+
     raw = _load_raw()
     subs = raw.get("subscriptions", [])
 
