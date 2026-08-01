@@ -160,11 +160,12 @@ def cmd_subscribe(args: List[str]) -> int:
     ui.rule("Your topics")
     if saved_topics:
         saved_labels = [labels[t].label for t in saved_topics if t in labels]
-        ui.info(f"Your saved topics: {', '.join(saved_labels)}")
+        ui.info(f"Your current topics: {', '.join(saved_labels)}")
         ui.info("\nOptions:")
-        ui.info("  Enter = use your saved topics")
-        ui.info("  'all' = subscribe to all topics")
-        ui.info("  Numbers = pick specific topics (e.g. 1,3,5)\n")
+        ui.info("  Enter = keep current topics")
+        ui.info("  'add'  = add more topics to your current selection")
+        ui.info("  'all'  = subscribe to all topics")
+        ui.info("  Numbers = replace with specific topics (e.g. 1,3,5)\n")
         all_topics = topics_list + [labels[ct] for ct in custom_topics]
         for i, t in enumerate(all_topics, 1):
             marker = " ✓" if t.id in saved_topics else ""
@@ -172,13 +173,47 @@ def cmd_subscribe(args: List[str]) -> int:
             ui.info(f"  {i:2d}. {t.label}{is_custom}{marker}")
         print()
         try:
-            topic_choice = ui.prompt("Topics (Enter for saved) › ").strip()
+            topic_choice = ui.prompt("Topics (Enter to keep) › ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
 
         if topic_choice == "":
             selected_topics = saved_topics
+        elif topic_choice.lower() == "add":
+            # Show only topics not already selected
+            available = [t for t in all_topics if t.id not in saved_topics]
+            if not available:
+                ui.info("You're already subscribed to all available topics.")
+                selected_topics = saved_topics
+            else:
+                ui.info("\nTopics you can add:")
+                for i, t in enumerate(available, 1):
+                    ui.info(f"  {i:2d}. {t.label}")
+                print()
+                try:
+                    add_choice = ui.prompt("Topics to add (numbers) › ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    return 0
+                if not add_choice:
+                    selected_topics = saved_topics
+                elif add_choice.lower() == "all":
+                    selected_topics = saved_topics + [t.id for t in available]
+                else:
+                    try:
+                        indices = [int(x.strip()) - 1 for x in add_choice.split(",")]
+                        new_topics = []
+                        for idx in indices:
+                            if 0 <= idx < len(available):
+                                new_topics.append(available[idx].id)
+                            else:
+                                ui.error(f"Invalid choice: {idx + 1}")
+                                return 1
+                        selected_topics = saved_topics + new_topics
+                    except ValueError:
+                        ui.error("Enter numbers separated by commas or 'all'.")
+                        return 1
         elif topic_choice.lower() == "all":
             selected_topics = [t.id for t in all_topics]
         else:
@@ -192,7 +227,7 @@ def cmd_subscribe(args: List[str]) -> int:
                         ui.error(f"Invalid choice: {idx + 1}")
                         return 1
             except ValueError:
-                ui.error("Enter numbers separated by commas, 'all', or press Enter for saved topics.")
+                ui.error("Enter numbers separated by commas, 'add', 'all', or press Enter to keep.")
                 return 1
     else:
         ui.info("Select topics you want to receive papers about.")

@@ -1036,6 +1036,170 @@ for freq, days in FREQUENCY_DAYS.items():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TEST 22 — Add topics to existing subscription (not replace)
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 22: add topics to existing subscription ===")
+
+_write_subs([])
+
+# Start with 2 topics
+add_subscription("add@test.com", "weekly", ["ai-ml", "nlp"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("initial: 2 topics", set(sub.topics) == {"ai-ml", "nlp"})
+
+# Simulate 'add' flow: new topics appended to existing
+existing = sub.topics
+new_to_add = ["cv", "robotics"]
+combined = list(set(existing + new_to_add))
+add_subscription("add@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("after add: 4 topics", set(sub.topics) == {"ai-ml", "nlp", "cv", "robotics"})
+check("after add: frequency preserved", sub.frequency == "weekly")
+
+# Add a topic that already exists (no duplicate)
+existing = sub.topics
+new_to_add = ["ai-ml", "security"]
+combined = list(set(existing + new_to_add))
+add_subscription("add@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add with dup: no duplicate", sub.topics.count("ai-ml") == 1)
+check("add with dup: new topic added", "security" in sub.topics)
+check("add with dup: 5 topics total", len(sub.topics) == 5)
+
+# Verify add_topic_to_subscription works for single topic
+add_topic_to_subscription("add@test.com", "math")
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add_topic: math added", "math" in sub.topics)
+check("add_topic: 6 topics total", len(sub.topics) == 6)
+
+# add_topic_to_subscription with existing topic (no duplicate)
+result = add_topic_to_subscription("add@test.com", "ai-ml")
+check("add_topic existing: returns True", result is True)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add_topic existing: no duplicate", sub.topics.count("ai-ml") == 1)
+check("add_topic existing: count unchanged", len(sub.topics) == 6)
+
+# add_topic_to_subscription for non-existent email
+result = add_topic_to_subscription("nobody@test.com", "cv")
+check("add_topic miss: returns False", result is False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 23 — Local papers fetching unaffected by subscribe flow
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 23: local papers config isolation ===")
+
+from research_agent.local_config import get_topics, LOCAL_PATH
+import json as _json
+
+# Save original local config
+original_local = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+
+# Verify get_topics returns local config topics
+local_topics = get_topics()
+check("local topics: from data/local.json", isinstance(local_topics, list))
+
+# Add a subscription — local config should not change
+_write_subs([])
+add_subscription("isolation@test.com", "3days", ["nlp", "cv", "robotics"])
+after_sub = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("subscribe: local config unchanged", after_sub == original_local)
+
+# get_topics still returns original local topics
+check("get_topics: still returns local", get_topics() == local_topics)
+
+# Multiple subscriptions don't affect local config
+add_subscription("iso2@test.com", "weekly", ["ai-ml"])
+add_subscription("iso3@test.com", "monthly", ["security", "math"])
+after_multi = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("multi subscribe: local config unchanged", after_multi == original_local)
+
+# _get_effective_topics for non-existent email falls back to local config
+from research_agent.subscribe.cli import _get_effective_topics
+eff = _get_effective_topics("nonexistent@test.com")
+check("effective topics: falls back to local", eff == local_topics)
+
+# _get_effective_topics for existing email returns subscription topics
+eff = _get_effective_topics("isolation@test.com")
+check("effective topics: returns sub topics", set(eff) == {"nlp", "cv", "robotics"})
+
+# Local config still unchanged
+final_local = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("final: local config unchanged", final_local == original_local)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 24 — Subscribe replace vs add behavior
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 24: replace vs add topic behavior ===")
+
+_write_subs([])
+
+# Replace mode: user picks specific topics (replaces existing)
+add_subscription("replace@test.com", "weekly", ["ai-ml", "nlp", "cv"])
+add_subscription("replace@test.com", "weekly", ["nlp", "robotics"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "replace@test.com"][0]
+check("replace: only selected topics", set(sub.topics) == {"nlp", "robotics"})
+check("replace: old topics gone", "ai-ml" not in sub.topics and "cv" not in sub.topics)
+
+# Add mode: user adds to existing
+add_subscription("addmode@test.com", "weekly", ["ai-ml", "nlp"])
+existing = [s for s in load_subscriptions() if s.email == "addmode@test.com"][0].topics
+combined = list(set(existing + ["cv", "robotics"]))
+add_subscription("addmode@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "addmode@test.com"][0]
+check("add mode: old topics kept", all(t in sub.topics for t in ["ai-ml", "nlp"]))
+check("add mode: new topics added", all(t in sub.topics for t in ["cv", "robotics"]))
+check("add mode: 4 topics total", len(sub.topics) == 4)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 25 — Pipeline uses subscription topics, not local config
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 25: pipeline uses subscription topics ===")
+
+_write_subs([])
+
+add_subscription("pipe@test.com", "3days", ["nlp", "cv"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "pipe@test.com"][0]
+check("pipe sub: topics are nlp+cv", set(sub.topics) == {"nlp", "cv"})
+
+papers_by_topic = {
+    "ai-ml": [_make_paper("ai1", "AI Paper")],
+    "nlp": [_make_paper("nlp1", "NLP Paper")],
+    "cv": [_make_paper("cv1", "CV Paper")],
+}
+topic_labels = {"ai-ml": "AI", "nlp": "NLP", "cv": "CV"}
+
+sub_render = Subscriber(email="pipe@test.com", topics=sub.topics, token=sub.token)
+html = render_digest(sub_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+check("pipe render: has NLP", "NLP Paper" in html)
+check("pipe render: has CV", "CV Paper" in html)
+check("pipe render: no AI", "AI Paper" not in html)
+
+# Add topics to subscription
+existing = sub.topics
+add_subscription("pipe@test.com", "3days", existing + ["ai-ml"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "pipe@test.com"][0]
+check("pipe after add: 3 topics", set(sub.topics) == {"nlp", "cv", "ai-ml"})
+
+sub_render = Subscriber(email="pipe@test.com", topics=sub.topics, token=sub.token)
+html = render_digest(sub_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+check("pipe render after add: has NLP", "NLP Paper" in html)
+check("pipe render after add: has CV", "CV Paper" in html)
+check("pipe render after add: has AI", "AI Paper" in html)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CLEANUP & SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
 
