@@ -32,26 +32,13 @@ from .models import Paper
 from .rank import rank_for_topic
 from .render import render_digest
 from .summarize import Summarizer
-from .subscribers import Subscriber, load_subscribers
+from .subscribe import Subscriber, load_subscribers
+from .subscribe.service import active_topic_ids as _active_topic_ids
+from .subscribe.service import merge_subscribers
 from .sources import arxiv, biorxiv, europepmc, openalex, rss, semanticscholar
-from .subscription import get_due_subscriptions, mark_sent
+from .subscribe import get_due_subscriptions, mark_sent
 
 PREVIEW_DIR = cfg.ROOT / "preview"
-
-
-def _active_topic_ids(subs: List[Subscriber], known: Set[str]) -> Set[str]:
-    active: Set[str] = set()
-    for s in subs:
-        for t in s.topics:
-            if t in known:
-                active.add(t)
-            else:
-                log.warning(
-                    "subscriber %s has topic %r not in topics.yaml — "
-                    "papers for this topic will not be fetched",
-                    s.email, t,
-                )
-    return active
 
 
 def _fetch_topic(topic: cfg.Topic, settings: cfg.Settings, secrets: cfg.Secrets) -> List[Paper]:
@@ -145,36 +132,18 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         subscribers = [Subscriber(email="local@preview", topics=topic_override)]
         log.info("local preview mode with topics: %s", topic_override)
     else:
-        subscribers = load_subscribers(secrets)
-
+        csv_subs = load_subscribers(secrets)
         due_local = get_due_subscriptions()
+
         if due_local:
-            # Deduplicate: don't add local subs that already exist in CSV,
-            # but still track their tokens so mark_sent fires, and merge
-            # any local-only topics into the CSV subscriber.
-            csv_emails = {s.email.lower() for s in subscribers}
-            for ls in due_local:
-                if ls.email.lower() not in csv_emails:
-                    subscribers.append(Subscriber(
-                        email=ls.email,
-                        topics=ls.topics,
-                        token=ls.token,
-                    ))
-                else:
-                    for s in subscribers:
-                        if s.email.lower() == ls.email.lower():
-                            merged = set(s.topics)
-                            merged.update(ls.topics)
-                            s.topics = sorted(merged)
-                            break
-                    log.info("skipping duplicate: %s (already in CSV)", ls.email)
-                # Always track local token so mark_sent fires after send
-                local_subs_tokens.append(ls.token)
+            subscribers, local_subs_tokens = merge_subscribers(csv_subs, due_local)
             log.info(
                 "%d due local subscription(s): %s",
                 len(due_local),
                 ", ".join(f"{s.email}[{s.frequency}]" for s in due_local),
             )
+        else:
+            subscribers = csv_subs
 
         if limit_subscribers:
             subscribers = subscribers[:limit_subscribers]

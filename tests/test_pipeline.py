@@ -15,15 +15,16 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from research_agent.models import Paper, NewsItem
-from research_agent.subscribers import Subscriber
-from research_agent.subscription import (
+from research_agent.subscribe import Subscriber
+from research_agent.subscribe import (
     Subscription, is_due, FREQUENCY_DAYS, add_subscription,
     load_subscriptions, remove_subscription, remove_by_email,
     add_topic_to_subscription, get_subscription_by_email,
     get_due_subscriptions, mark_sent, subscription_count,
-    _load_raw, _save_raw,
 )
-from research_agent.pipeline import _active_topic_ids, _dedup, _fetch_topic
+from research_agent.subscribe.storage import _load_raw, _save_raw
+from research_agent.subscribe.service import active_topic_ids as _active_topic_ids
+from research_agent.pipeline import _dedup, _fetch_topic
 from research_agent.render import render_digest
 from research_agent.rank import rank_for_topic
 from research_agent.config import (
@@ -32,7 +33,7 @@ from research_agent.config import (
 
 # ── temp subscription file ───────────────────────────────────────────────────
 _tmp_sub = Path(tempfile.mktemp(suffix=".json", prefix="rp_test_sub_"))
-import research_agent.subscription as sub_mod
+import research_agent.subscribe.storage as sub_mod
 _ORIG_SUB_PATH = sub_mod.SUBSCRIPTIONS_PATH
 sub_mod.SUBSCRIPTIONS_PATH = _tmp_sub
 
