@@ -46,6 +46,8 @@ def load_subscriptions() -> List[Subscription]:
             confirmed=item.get("confirmed", True),
             created_at=item.get("created_at", ""),
             last_sent=item.get("last_sent", ""),
+            sent_count=item.get("sent_count", 0),
+            failure_count=item.get("failure_count", 0),
         ))
     return subs
 
@@ -81,6 +83,8 @@ def add_subscription(email: str, frequency: str, topics: List[str]) -> Subscript
         "confirmed": True,
         "created_at": now,
         "last_sent": "",
+        "sent_count": 0,
+        "failure_count": 0,
     }
     subs.append(entry)
     raw["subscriptions"] = subs
@@ -138,6 +142,8 @@ def get_subscription_by_email(email: str) -> Optional[Subscription]:
                 confirmed=item.get("confirmed", True),
                 created_at=item.get("created_at", ""),
                 last_sent=item.get("last_sent", ""),
+                sent_count=item.get("sent_count", 0),
+                failure_count=item.get("failure_count", 0),
             )
     return None
 
@@ -167,11 +173,23 @@ def get_due_subscriptions() -> List[Subscription]:
 
 
 def mark_sent(token: str) -> None:
+    """Record a successful send: update last_sent and increment sent_count."""
     now = datetime.now(timezone.utc).isoformat()
     raw = _load_raw()
     for item in raw.get("subscriptions", []):
         if item.get("token") == token:
             item["last_sent"] = now
+            item["sent_count"] = item.get("sent_count", 0) + 1
+            break
+    _save_raw(raw)
+
+
+def mark_failed(token: str) -> None:
+    """Record a failed send: increment failure_count."""
+    raw = _load_raw()
+    for item in raw.get("subscriptions", []):
+        if item.get("token") == token:
+            item["failure_count"] = item.get("failure_count", 0) + 1
             break
     _save_raw(raw)
 

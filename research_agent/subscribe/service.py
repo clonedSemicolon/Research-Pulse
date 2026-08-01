@@ -11,7 +11,7 @@ from typing import List, Set, Tuple
 from ..log import get as _log
 from .models import Subscriber, Subscription
 from .csv_loader import load_subscribers
-from .storage import get_due_subscriptions, mark_sent
+from .storage import get_due_subscriptions, mark_sent, mark_failed
 
 log = _log("subscribe.service")
 

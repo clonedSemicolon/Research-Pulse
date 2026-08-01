@@ -17,6 +17,7 @@ from .storage import (
     get_subscription_by_email,
     is_due,
     load_subscriptions,
+    mark_failed,
     mark_sent,
     remove_by_email,
     remove_subscription,

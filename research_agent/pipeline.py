@@ -36,7 +36,7 @@ from .subscribe import Subscriber, load_subscribers
 from .subscribe.service import active_topic_ids as _active_topic_ids
 from .subscribe.service import merge_subscribers
 from .sources import arxiv, biorxiv, europepmc, openalex, rss, semanticscholar
-from .subscribe import get_due_subscriptions, mark_sent
+from .subscribe import get_due_subscriptions, mark_sent, mark_failed
 
 PREVIEW_DIR = cfg.ROOT / "preview"
 
@@ -183,6 +183,7 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         on_progress(f"news:{len(news)}")
 
     sent = 0
+    failed_local_tokens: Set[str] = set()
     if dry_run:
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
         if on_progress:
@@ -219,12 +220,19 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
                 sent_topic_ids.update(sub.topics)
                 if sub.token and sub.token in local_subs_tokens:
                     sent_local_tokens.add(sub.token)
+            else:
+                if sub.token and sub.token in local_subs_tokens:
+                    failed_local_tokens.add(sub.token)
             time.sleep(0.5)
 
     for token in sent_local_tokens:
         mark_sent(token)
+    for token in failed_local_tokens:
+        mark_failed(token)
     if sent_local_tokens:
         log.info("updated last_sent for %d local subscription(s)", len(sent_local_tokens))
+    if failed_local_tokens:
+        log.info("recorded %d failed send(s)", len(failed_local_tokens))
 
     log.info("sent %d/%d digest(s)", sent, len(subscribers))
 

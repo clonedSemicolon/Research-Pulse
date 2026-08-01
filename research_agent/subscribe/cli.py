@@ -5,7 +5,7 @@ Provides: subscribe, unsubscribe, subscriber list/count, send-digest, send-to.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from .. import ui
 from ..config import load_topics, topics_by_id, load_settings, load_secrets
@@ -15,14 +15,25 @@ from .storage import (
     add_subscription,
     get_subscription_by_email,
     get_due_subscriptions,
+    is_due,
     load_subscriptions,
     mark_sent,
+    mark_failed,
     remove_by_email,
     remove_subscription,
     subscription_count,
 )
 from .csv_loader import load_subscribers
 from .models import Subscriber
+
+
+def _get_effective_topics(email: str) -> List[str]:
+    """Get the best topic list for a subscriber: existing subscription topics
+    take priority over local config topics."""
+    existing = get_subscription_by_email(email)
+    if existing and existing.topics:
+        return existing.topics
+    return get_topics()
 
 
 def _mask_email(email: str) -> str:
@@ -62,7 +73,12 @@ def cmd_subscriber(args: List[str]) -> int:
             freq = FREQUENCY_LABELS.get(s.frequency, s.frequency)
             topics_str = ", ".join(s.topics) if s.topics else "local topics"
             last = s.last_sent[:10] if s.last_sent else "never"
-            ui.info(f"  {s.email}  ·  {freq}  ·  topics: {topics_str}  ·  last sent: {last}")
+            due = "yes" if is_due(s) else "no"
+            ui.info(
+                f"  {s.email}  ·  {freq}  ·  topics: {topics_str}\n"
+                f"    last sent: {last}  ·  due: {due}"
+                f"  ·  sent: {s.sent_count}  ·  failures: {s.failure_count}"
+            )
         return 0
 
     # ── Count ───────────────────────────────────────────────────────
@@ -87,7 +103,7 @@ def cmd_subscribe(args: List[str]) -> int:
         email = args[0]
         topics_list, _ = load_topics()
         labels = topics_by_id(topics_list)
-        saved_topics = get_topics()
+        saved_topics = _get_effective_topics(email)
 
         if not saved_topics:
             ui.error("No topics configured. Run 'research-pulse setup' first.")
@@ -120,9 +136,21 @@ def cmd_subscribe(args: List[str]) -> int:
     # ── Interactive subscribe flow ──────────────────────────────────
     ui.banner("Subscribe to ResearchPulse")
 
+    # Ask for email first so we can check for existing subscription
+    email = ""
+    try:
+        email = ui.prompt("Your email address › ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    if not email or "@" not in email:
+        ui.error("Please enter a valid email address.")
+        return 1
+
     topics_list, _ = load_topics()
     labels = topics_by_id(topics_list)
-    saved_topics = get_topics()
+    # Use existing subscription topics if available, otherwise local config
+    saved_topics = _get_effective_topics(email)
 
     custom_topics = [t for t in saved_topics if t not in labels]
     for ct in custom_topics:
@@ -216,16 +244,6 @@ def cmd_subscribe(args: List[str]) -> int:
         return 0
     except (ValueError, IndexError):
         ui.error("Enter a number (1-4).")
-        return 1
-
-    email = ""
-    try:
-        email = ui.prompt("Your email address › ")
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return 0
-    if not email or "@" not in email:
-        ui.error("Please enter a valid email address.")
         return 1
 
     freq_label = FREQUENCY_LABELS.get(frequency, frequency)
@@ -403,7 +421,14 @@ def cmd_send_to(args: List[str]) -> int:
     if success:
         ui.success(f"Digest sent to {sub.email}")
         ui.info("Check their inbox.")
+        # Track success if this is a local subscription
+        local_sub = get_subscription_by_email(target_email)
+        if local_sub and local_sub.token:
+            mark_sent(local_sub.token)
     else:
         ui.error("Failed to send email.")
+        local_sub = get_subscription_by_email(target_email)
+        if local_sub and local_sub.token:
+            mark_failed(local_sub.token)
 
     return 0 if success else 1

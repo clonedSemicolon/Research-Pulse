@@ -31,6 +31,8 @@ class Subscription:
     confirmed: bool = True
     created_at: str = ""
     last_sent: str = ""
+    sent_count: int = 0
+    failure_count: int = 0
 
 
 @dataclass
