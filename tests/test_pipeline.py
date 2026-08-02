@@ -15,15 +15,16 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from research_agent.models import Paper, NewsItem
-from research_agent.subscribers import Subscriber
-from research_agent.subscription import (
+from research_agent.subscribe import Subscriber
+from research_agent.subscribe import (
     Subscription, is_due, FREQUENCY_DAYS, add_subscription,
     load_subscriptions, remove_subscription, remove_by_email,
     add_topic_to_subscription, get_subscription_by_email,
-    get_due_subscriptions, mark_sent, subscription_count,
-    _load_raw, _save_raw,
+    get_due_subscriptions, mark_sent, mark_failed, subscription_count,
 )
-from research_agent.pipeline import _active_topic_ids, _dedup, _fetch_topic
+from research_agent.subscribe.storage import _load_raw, _save_raw
+from research_agent.subscribe.service import active_topic_ids as _active_topic_ids
+from research_agent.pipeline import _dedup, _fetch_topic
 from research_agent.render import render_digest
 from research_agent.rank import rank_for_topic
 from research_agent.config import (
@@ -32,7 +33,7 @@ from research_agent.config import (
 
 # ── temp subscription file ───────────────────────────────────────────────────
 _tmp_sub = Path(tempfile.mktemp(suffix=".json", prefix="rp_test_sub_"))
-import research_agent.subscription as sub_mod
+import research_agent.subscribe.storage as sub_mod
 _ORIG_SUB_PATH = sub_mod.SUBSCRIPTIONS_PATH
 sub_mod.SUBSCRIPTIONS_PATH = _tmp_sub
 
@@ -714,6 +715,488 @@ html_mt = render_digest(many_topics_sub, papers_few, labels_many, news, test_set
 check("30 topics, 2 with papers: has P0", "P0" in html_mt)
 check("30 topics, 2 with papers: has P29", "P29" in html_mt)
 check("30 topics: no crash", html_mt is not None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 17 — Subscribe flow: current topics as defaults, re-subscription
+# Scenario 1: "if a person is subscribed, consider current topics"
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 17: subscribe flow — current topics defaults ===")
+
+_write_subs([])
+
+# New subscriber: no existing subscription → topics from local config
+from research_agent.subscribe.cli import _get_effective_topics
+from research_agent.local_config import get_topics
+
+# Test with no existing subscription
+_write_subs([])
+eff = _get_effective_topics("new@test.com")
+# Should fall back to local config topics (get_topics())
+local_topics = get_topics()
+check("new sub: falls back to local config", eff == local_topics)
+
+# Add a subscription with specific topics
+add_subscription("existing@test.com", "weekly", ["ai-ml", "nlp", "cv"])
+eff = _get_effective_topics("existing@test.com")
+check("existing sub: returns subscription topics", set(eff) == {"ai-ml", "nlp", "cv"})
+
+# Case-insensitive lookup
+eff = _get_effective_topics("EXISTING@Test.Com")
+check("existing sub: case-insensitive lookup", set(eff) == {"ai-ml", "nlp", "cv"})
+
+# Re-subscribe with different topics → updates
+add_subscription("existing@test.com", "3days", ["robotics"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "existing@test.com"][0]
+check("re-sub: topics updated", sub.topics == ["robotics"])
+check("re-sub: frequency updated", sub.frequency == "3days")
+
+# Verify the subscription stores the selected topics correctly
+add_subscription("topic@test.com", "biweekly", ["ai-ml", "cv", "robotics"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "topic@test.com"][0]
+check("sub stores topics", set(sub.topics) == {"ai-ml", "cv", "robotics"})
+check("sub stores frequency", sub.frequency == "biweekly")
+
+# Verify topics + frequency flow: add sub with specific topics and frequency
+add_subscription("flow@test.com", "monthly", ["nlp", "cv"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "flow@test.com"][0]
+check("flow: topics stored", set(sub.topics) == {"nlp", "cv"})
+check("flow: frequency stored", sub.frequency == "monthly")
+check("flow: is_due (new, no last_sent)", is_due(sub) is True)
+
+# After mark_sent, not due
+mark_sent(sub.token)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "flow@test.com"][0]
+check("flow: after send, not due", is_due(sub) is False)
+check("flow: sent_count incremented", sub.sent_count == 1)
+
+# After frequency window, due again
+raw = _load_raw()
+for item in raw["subscriptions"]:
+    if item["email"] == "flow@test.com":
+        item["last_sent"] = _days_ago(30)
+_save_raw(raw)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "flow@test.com"][0]
+check("flow: 30d later (monthly), due again", is_due(sub) is True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 18 — Admin subscriber list: sent_count, failure_count, due status
+# Scenario 2: "admin commands should see all subscriber email, frequency,
+#   topics, how many sent successfully, due, and failure status"
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 18: admin subscriber list — stats ===")
+
+_write_subs([])
+
+# Add subscribers with different states
+add_subscription("alice@test.com", "3days", ["ai-ml", "nlp"])
+add_subscription("bob@test.com", "weekly", ["cv"])
+add_subscription("carol@test.com", "monthly", ["ai-ml", "cv", "robotics"])
+
+# Verify initial stats are zero
+loaded = load_subscriptions()
+for s in loaded:
+    check(f"{s.email}: initial sent_count=0", s.sent_count == 0)
+    check(f"{s.email}: initial failure_count=0", s.failure_count == 0)
+
+# Simulate successful sends
+alice = [s for s in loaded if s.email == "alice@test.com"][0]
+bob = [s for s in loaded if s.email == "bob@test.com"][0]
+carol = [s for s in loaded if s.email == "carol@test.com"][0]
+
+mark_sent(alice.token)
+mark_sent(alice.token)
+mark_sent(alice.token)  # alice: 3 successful sends
+mark_sent(bob.token)     # bob: 1 successful send
+
+# Simulate failures
+mark_failed(bob.token)
+mark_failed(bob.token)   # bob: 2 failures
+
+# Reload and verify stats
+loaded = load_subscriptions()
+alice = [s for s in loaded if s.email == "alice@test.com"][0]
+bob = [s for s in loaded if s.email == "bob@test.com"][0]
+carol = [s for s in loaded if s.email == "carol@test.com"][0]
+
+check("alice: sent_count=3", alice.sent_count == 3)
+check("alice: failure_count=0", alice.failure_count == 0)
+check("bob: sent_count=1", bob.sent_count == 1)
+check("bob: failure_count=2", bob.failure_count == 2)
+check("carol: sent_count=0", carol.sent_count == 0)
+check("carol: failure_count=0", carol.failure_count == 0)
+
+# Verify due status
+check("alice: not due (just sent)", is_due(alice) is False)
+check("bob: not due (just sent)", is_due(bob) is False)
+check("carol: due (never sent)", is_due(carol) is True)
+
+# Verify get_due returns only due subscribers
+due = get_due_subscriptions()
+due_emails = [s.email for s in due]
+check("due list: carol is due", "carol@test.com" in due_emails)
+check("due list: alice not due", "alice@test.com" not in due_emails)
+check("due list: bob not due", "bob@test.com" not in due_emails)
+
+# Simulate time passing for alice (3 days for 3days frequency)
+raw = _load_raw()
+for item in raw["subscriptions"]:
+    if item["email"] == "alice@test.com":
+        item["last_sent"] = _days_ago(3)
+_save_raw(raw)
+loaded = load_subscriptions()
+alice = [s for s in loaded if s.email == "alice@test.com"][0]
+check("alice: 3d later, due again", is_due(alice) is True)
+
+# Verify stats persist across loads
+loaded = load_subscriptions()
+alice = [s for s in loaded if s.email == "alice@test.com"][0]
+check("alice: sent_count persists", alice.sent_count == 3)
+check("alice: failure_count persists", alice.failure_count == 0)
+
+# Admin list should show all fields
+for s in loaded:
+    has_email = bool(s.email)
+    has_freq = s.frequency in FREQUENCY_DAYS
+    has_topics = bool(s.topics)
+    has_sent_count = isinstance(s.sent_count, int)
+    has_failure_count = isinstance(s.failure_count, int)
+    has_due = isinstance(is_due(s), bool)
+    check(f"admin list: {s.email} has all fields",
+          all([has_email, has_freq, has_topics, has_sent_count, has_failure_count, has_due]))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 19 — Admin send-to: uses subscriber topics, tracks sent/failed
+# Scenario 3: "admin should send email to any subscriber with their topics"
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 19: admin send-to — subscriber topics + tracking ===")
+
+_write_subs([])
+
+# Add a subscriber with specific topics
+sub = add_subscription("target@test.com", "weekly", ["ai-ml", "nlp", "cv"])
+
+# Verify get_subscription_by_email returns correct topics
+found = get_subscription_by_email("target@test.com")
+check("send-to: finds subscriber", found is not None)
+check("send-to: correct email", found.email == "target@test.com")
+check("send-to: correct topics", set(found.topics) == {"ai-ml", "nlp", "cv"})
+check("send-to: correct frequency", found.frequency == "weekly")
+check("send-to: has token", bool(found.token))
+
+# Verify the subscriber's topics match what was subscribed
+sub_topics = set(found.topics)
+expected_topics = {"ai-ml", "nlp", "cv"}
+check("send-to: topics match subscription", sub_topics == expected_topics)
+
+# Simulate successful send tracking
+mark_sent(found.token)
+found = get_subscription_by_email("target@test.com")
+check("send-to: sent_count after success", found.sent_count == 1)
+check("send-to: failure_count still 0", found.failure_count == 0)
+
+# Simulate failed send tracking
+mark_failed(found.token)
+mark_failed(found.token)
+found = get_subscription_by_email("target@test.com")
+check("send-to: failure_count after failures", found.failure_count == 2)
+check("send-to: sent_count still 1", found.sent_count == 1)
+
+# Verify multiple sends accumulate
+mark_sent(found.token)
+mark_sent(found.token)
+found = get_subscription_by_email("target@test.com")
+check("send-to: sent_count accumulates", found.sent_count == 3)
+
+# Verify send-to works with case-insensitive email
+found_ci = get_subscription_by_email("TARGET@Test.Com")
+check("send-to: case-insensitive lookup", found_ci is not None)
+check("send-to: same topics", set(found_ci.topics) == expected_topics)
+check("send-to: same token", found_ci.token == found.token)
+
+# Verify non-existent subscriber returns None
+not_found = get_subscription_by_email("nobody@test.com")
+check("send-to: miss returns None", not_found is None)
+
+# Verify the render uses subscriber's topics (not admin's)
+papers_by_topic = {
+    "ai-ml": [_make_paper("ai1", "AI Paper")],
+    "nlp": [_make_paper("nlp1", "NLP Paper")],
+    "cv": [_make_paper("cv1", "CV Paper")],
+    "robotics": [_make_paper("rob1", "Robotics Paper")],
+}
+topic_labels = {"ai-ml": "AI", "nlp": "NLP", "cv": "CV", "robotics": "Robotics"}
+
+sub_for_render = Subscriber(email="target@test.com", topics=["ai-ml", "nlp", "cv"], token=found.token)
+html = render_digest(sub_for_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+
+check("send-to render: has AI", "AI Paper" in html)
+check("send-to render: has NLP", "NLP Paper" in html)
+check("send-to render: has CV", "CV Paper" in html)
+check("send-to render: no Robotics", "Robotics Paper" not in html)
+check("send-to render: has unsub token", found.token in html)
+
+# Verify different subscriber with different topics gets different content
+sub2 = add_subscription("other@test.com", "3days", ["robotics"])
+found2 = get_subscription_by_email("other@test.com")
+sub2_for_render = Subscriber(email="other@test.com", topics=["robotics"], token=found2.token)
+html2 = render_digest(sub2_for_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+
+check("send-to other: has Robotics", "Robotics Paper" in html2)
+check("send-to other: no AI", "AI Paper" not in html2)
+check("send-to other: no NLP", "NLP Paper" not in html2)
+check("send-to other: different from target", html != html2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 20 — mark_failed and mark_sent independence
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 20: mark_failed + mark_sent independence ===")
+
+_write_subs([])
+s = add_subscription("track@test.com", "3days", ["ai-ml"])
+
+# Initial state
+loaded = load_subscriptions()
+t = [x for x in loaded if x.email == "track@test.com"][0]
+check("initial: sent=0, fail=0", t.sent_count == 0 and t.failure_count == 0)
+
+# Interleave sends and failures
+mark_sent(t.token)
+mark_failed(t.token)
+mark_sent(t.token)
+mark_failed(t.token)
+mark_failed(t.token)
+mark_sent(t.token)
+mark_sent(t.token)
+
+loaded = load_subscriptions()
+t = [x for x in loaded if x.email == "track@test.com"][0]
+check("mixed: sent_count=4", t.sent_count == 4)
+check("mixed: failure_count=3", t.failure_count == 3)
+
+# mark_sent also updates last_sent
+check("mixed: last_sent updated", t.last_sent != "")
+
+# mark_failed does NOT update last_sent
+prev_last_sent = t.last_sent
+mark_failed(t.token)
+loaded = load_subscriptions()
+t = [x for x in loaded if x.email == "track@test.com"][0]
+check("mark_failed: last_sent unchanged", t.last_sent == prev_last_sent)
+check("mark_failed: failure_count=4", t.failure_count == 4)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 21 — Subscriber with all 4 frequencies + stats
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 21: all frequencies with send tracking ===")
+
+_write_subs([])
+
+for freq, days in FREQUENCY_DAYS.items():
+    email = f"{freq}@test.com"
+    add_subscription(email, freq, ["ai-ml"])
+    loaded = load_subscriptions()
+    s = [x for x in loaded if x.email == email][0]
+
+    # New sub is due
+    check(f"{freq}: new sub is due", is_due(s) is True)
+
+    # Send and track
+    mark_sent(s.token)
+    mark_failed(s.token)
+    mark_sent(s.token)
+
+    loaded = load_subscriptions()
+    s = [x for x in loaded if x.email == email][0]
+    check(f"{freq}: sent_count=2", s.sent_count == 2)
+    check(f"{freq}: failure_count=1", s.failure_count == 1)
+    check(f"{freq}: after send, not due", is_due(s) is False)
+
+    # Simulate time passing to boundary
+    raw = _load_raw()
+    for item in raw["subscriptions"]:
+        if item["email"] == email:
+            item["last_sent"] = _days_ago(days)
+    _save_raw(raw)
+    loaded = load_subscriptions()
+    s = [x for x in loaded if x.email == email][0]
+    check(f"{freq}: {days}d later, due", is_due(s) is True)
+
+    # Stats persist
+    check(f"{freq}: stats persist", s.sent_count == 2 and s.failure_count == 1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 22 — Add topics to existing subscription (not replace)
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 22: add topics to existing subscription ===")
+
+_write_subs([])
+
+# Start with 2 topics
+add_subscription("add@test.com", "weekly", ["ai-ml", "nlp"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("initial: 2 topics", set(sub.topics) == {"ai-ml", "nlp"})
+
+# Simulate 'add' flow: new topics appended to existing
+existing = sub.topics
+new_to_add = ["cv", "robotics"]
+combined = list(set(existing + new_to_add))
+add_subscription("add@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("after add: 4 topics", set(sub.topics) == {"ai-ml", "nlp", "cv", "robotics"})
+check("after add: frequency preserved", sub.frequency == "weekly")
+
+# Add a topic that already exists (no duplicate)
+existing = sub.topics
+new_to_add = ["ai-ml", "security"]
+combined = list(set(existing + new_to_add))
+add_subscription("add@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add with dup: no duplicate", sub.topics.count("ai-ml") == 1)
+check("add with dup: new topic added", "security" in sub.topics)
+check("add with dup: 5 topics total", len(sub.topics) == 5)
+
+# Verify add_topic_to_subscription works for single topic
+add_topic_to_subscription("add@test.com", "math")
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add_topic: math added", "math" in sub.topics)
+check("add_topic: 6 topics total", len(sub.topics) == 6)
+
+# add_topic_to_subscription with existing topic (no duplicate)
+result = add_topic_to_subscription("add@test.com", "ai-ml")
+check("add_topic existing: returns True", result is True)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "add@test.com"][0]
+check("add_topic existing: no duplicate", sub.topics.count("ai-ml") == 1)
+check("add_topic existing: count unchanged", len(sub.topics) == 6)
+
+# add_topic_to_subscription for non-existent email
+result = add_topic_to_subscription("nobody@test.com", "cv")
+check("add_topic miss: returns False", result is False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 23 — Local papers fetching unaffected by subscribe flow
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 23: local papers config isolation ===")
+
+from research_agent.local_config import get_topics, LOCAL_PATH
+import json as _json
+
+# Save original local config
+original_local = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+
+# Verify get_topics returns local config topics
+local_topics = get_topics()
+check("local topics: from data/local.json", isinstance(local_topics, list))
+
+# Add a subscription — local config should not change
+_write_subs([])
+add_subscription("isolation@test.com", "3days", ["nlp", "cv", "robotics"])
+after_sub = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("subscribe: local config unchanged", after_sub == original_local)
+
+# get_topics still returns original local topics
+check("get_topics: still returns local", get_topics() == local_topics)
+
+# Multiple subscriptions don't affect local config
+add_subscription("iso2@test.com", "weekly", ["ai-ml"])
+add_subscription("iso3@test.com", "monthly", ["security", "math"])
+after_multi = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("multi subscribe: local config unchanged", after_multi == original_local)
+
+# _get_effective_topics for non-existent email falls back to local config
+from research_agent.subscribe.cli import _get_effective_topics
+eff = _get_effective_topics("nonexistent@test.com")
+check("effective topics: falls back to local", eff == local_topics)
+
+# _get_effective_topics for existing email returns subscription topics
+eff = _get_effective_topics("isolation@test.com")
+check("effective topics: returns sub topics", set(eff) == {"nlp", "cv", "robotics"})
+
+# Local config still unchanged
+final_local = _json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
+check("final: local config unchanged", final_local == original_local)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 24 — Subscribe replace vs add behavior
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 24: replace vs add topic behavior ===")
+
+_write_subs([])
+
+# Replace mode: user picks specific topics (replaces existing)
+add_subscription("replace@test.com", "weekly", ["ai-ml", "nlp", "cv"])
+add_subscription("replace@test.com", "weekly", ["nlp", "robotics"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "replace@test.com"][0]
+check("replace: only selected topics", set(sub.topics) == {"nlp", "robotics"})
+check("replace: old topics gone", "ai-ml" not in sub.topics and "cv" not in sub.topics)
+
+# Add mode: user adds to existing
+add_subscription("addmode@test.com", "weekly", ["ai-ml", "nlp"])
+existing = [s for s in load_subscriptions() if s.email == "addmode@test.com"][0].topics
+combined = list(set(existing + ["cv", "robotics"]))
+add_subscription("addmode@test.com", "weekly", combined)
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "addmode@test.com"][0]
+check("add mode: old topics kept", all(t in sub.topics for t in ["ai-ml", "nlp"]))
+check("add mode: new topics added", all(t in sub.topics for t in ["cv", "robotics"]))
+check("add mode: 4 topics total", len(sub.topics) == 4)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 25 — Pipeline uses subscription topics, not local config
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n=== TEST 25: pipeline uses subscription topics ===")
+
+_write_subs([])
+
+add_subscription("pipe@test.com", "3days", ["nlp", "cv"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "pipe@test.com"][0]
+check("pipe sub: topics are nlp+cv", set(sub.topics) == {"nlp", "cv"})
+
+papers_by_topic = {
+    "ai-ml": [_make_paper("ai1", "AI Paper")],
+    "nlp": [_make_paper("nlp1", "NLP Paper")],
+    "cv": [_make_paper("cv1", "CV Paper")],
+}
+topic_labels = {"ai-ml": "AI", "nlp": "NLP", "cv": "CV"}
+
+sub_render = Subscriber(email="pipe@test.com", topics=sub.topics, token=sub.token)
+html = render_digest(sub_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+check("pipe render: has NLP", "NLP Paper" in html)
+check("pipe render: has CV", "CV Paper" in html)
+check("pipe render: no AI", "AI Paper" not in html)
+
+# Add topics to subscription
+existing = sub.topics
+add_subscription("pipe@test.com", "3days", existing + ["ai-ml"])
+loaded = load_subscriptions()
+sub = [s for s in loaded if s.email == "pipe@test.com"][0]
+check("pipe after add: 3 topics", set(sub.topics) == {"nlp", "cv", "ai-ml"})
+
+sub_render = Subscriber(email="pipe@test.com", topics=sub.topics, token=sub.token)
+html = render_digest(sub_render, papers_by_topic, topic_labels, news, test_settings, test_secrets)
+check("pipe render after add: has NLP", "NLP Paper" in html)
+check("pipe render after add: has CV", "CV Paper" in html)
+check("pipe render after add: has AI", "AI Paper" in html)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

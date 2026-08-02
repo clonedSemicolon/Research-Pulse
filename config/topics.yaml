@@ -289,6 +289,15 @@ topics:
     semanticscholar: "artificial intelligence"
     europepmc: "artificial intelligence"
 
+  - id: llm-in-code-summary
+    label: "Llm In Code Summary"
+    keywords: ["LLM", "Code", "Summary"]
+    arxiv: []
+    biorxiv: []
+    openalex: "LLM in Code Summary"
+    semanticscholar: "LLM in Code Summary"
+    europepmc: "LLM in Code Summary"
+
 # Research-industry / community news. Pulled via RSS and shown in a shared
 # "What's happening in research" section for every subscriber.
 news_feeds:

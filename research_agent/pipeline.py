@@ -32,26 +32,18 @@ from .models import Paper
 from .rank import rank_for_topic
 from .render import render_digest
 from .summarize import Summarizer
-from .subscribers import Subscriber, load_subscribers
+from .subscribe import Subscriber, load_subscribers
+from .subscribe.service import active_topic_ids as _active_topic_ids
+from .subscribe.service import merge_subscribers
 from .sources import arxiv, biorxiv, europepmc, openalex, rss, semanticscholar
-from .subscription import get_due_subscriptions, mark_sent
+from .subscribe import (
+    get_due_subscriptions,
+    load_subscriptions,
+    mark_sent,
+    mark_failed,
+)
 
 PREVIEW_DIR = cfg.ROOT / "preview"
-
-
-def _active_topic_ids(subs: List[Subscriber], known: Set[str]) -> Set[str]:
-    active: Set[str] = set()
-    for s in subs:
-        for t in s.topics:
-            if t in known:
-                active.add(t)
-            else:
-                log.warning(
-                    "subscriber %s has topic %r not in topics.yaml — "
-                    "papers for this topic will not be fetched",
-                    s.email, t,
-                )
-    return active
 
 
 def _fetch_topic(topic: cfg.Topic, settings: cfg.Settings, secrets: cfg.Secrets) -> List[Paper]:
@@ -106,13 +98,19 @@ def _normalize_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]", "", title.lower())
 
 
-def _dedup(papers: List[Paper], cache: SeenCache) -> List[Paper]:
-    """Remove duplicates by ID, by normalized title, and against the seen cache."""
+def _dedup(papers: List[Paper], cache: Optional[SeenCache] = None) -> List[Paper]:
+    """Remove duplicates by ID, by normalized title, and against the seen cache.
+
+    Pass cache=None to skip the seen-cache check (local preview mode, where
+    papers already emailed to subscribers should still be visible).
+    """
     out: List[Paper] = []
     seen_ids: Set[str] = set()
     seen_titles: Set[str] = set()
     for p in papers:
-        if not p.id or p.id in seen_ids or cache.is_seen(p.id):
+        if not p.id or p.id in seen_ids:
+            continue
+        if cache is not None and cache.is_seen(p.id):
             continue
         title_key = _normalize_title(p.title) if p.title else ""
         if title_key and title_key in seen_titles:
@@ -126,7 +124,13 @@ def _dedup(papers: List[Paper], cache: SeenCache) -> List[Paper]:
 
 def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         topic_override: Optional[List[str]] = None,
-        on_progress: Optional[Callable[[str], None]] = None) -> int:
+        on_progress: Optional[Callable[[str], None]] = None,
+        force_local: bool = False) -> int:
+    """Run the digest pipeline.
+
+    force_local=True sends to every confirmed local subscription regardless
+    of its frequency schedule (used by the admin `send-digest` command).
+    """
     topics, feeds = cfg.load_topics()
     settings = cfg.load_settings()
     secrets = cfg.load_secrets()
@@ -139,42 +143,27 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         from .local_config import effective_papers_per_topic
         papers_limit = effective_papers_per_topic()
 
-    local_subs_tokens: List[str] = []
+    local_token_by_email: Dict[str, str] = {}
 
     if topic_override:
         subscribers = [Subscriber(email="local@preview", topics=topic_override)]
         log.info("local preview mode with topics: %s", topic_override)
     else:
-        subscribers = load_subscribers(secrets)
+        csv_subs = load_subscribers(secrets)
+        if force_local:
+            due_local = [s for s in load_subscriptions() if s.confirmed]
+        else:
+            due_local = get_due_subscriptions()
 
-        due_local = get_due_subscriptions()
         if due_local:
-            # Deduplicate: don't add local subs that already exist in CSV,
-            # but still track their tokens so mark_sent fires, and merge
-            # any local-only topics into the CSV subscriber.
-            csv_emails = {s.email.lower() for s in subscribers}
-            for ls in due_local:
-                if ls.email.lower() not in csv_emails:
-                    subscribers.append(Subscriber(
-                        email=ls.email,
-                        topics=ls.topics,
-                        token=ls.token,
-                    ))
-                else:
-                    for s in subscribers:
-                        if s.email.lower() == ls.email.lower():
-                            merged = set(s.topics)
-                            merged.update(ls.topics)
-                            s.topics = sorted(merged)
-                            break
-                    log.info("skipping duplicate: %s (already in CSV)", ls.email)
-                # Always track local token so mark_sent fires after send
-                local_subs_tokens.append(ls.token)
+            subscribers, local_token_by_email = merge_subscribers(csv_subs, due_local)
             log.info(
                 "%d due local subscription(s): %s",
                 len(due_local),
                 ", ".join(f"{s.email}[{s.frequency}]" for s in due_local),
             )
+        else:
+            subscribers = csv_subs
 
         if limit_subscribers:
             subscribers = subscribers[:limit_subscribers]
@@ -199,7 +188,9 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         raw = _fetch_topic(topic, settings, secrets)
         if on_progress:
             on_progress(f"raw:{topic_id}:{len(raw)}")
-        fresh = _dedup(raw, cache)
+        # Local preview ignores the seen cache: papers already emailed to
+        # subscribers must still show up when browsing locally.
+        fresh = _dedup(raw, None if topic_override else cache)
         ranked = rank_for_topic(fresh, topic, papers_limit)
         summarizer.annotate(ranked)
         papers_by_topic[topic_id] = ranked
@@ -214,6 +205,7 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
         on_progress(f"news:{len(news)}")
 
     sent = 0
+    failed_local_tokens: Set[str] = set()
     if dry_run:
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
         if on_progress:
@@ -245,17 +237,28 @@ def run(dry_run: bool = False, limit_subscribers: Optional[int] = None,
             html = render_digest(
                 sub, papers_by_topic, topic_labels, news, settings, secrets
             )
+            # Look up the local token by email: a subscriber that exists in
+            # both CSV and local storage carries the CSV token, so matching
+            # on sub.token would silently skip mark_sent for duplicates.
+            local_token = local_token_by_email.get(sub.email.lower())
             if mailer.send(sub.email, subject, html):
                 sent += 1
                 sent_topic_ids.update(sub.topics)
-                if sub.token and sub.token in local_subs_tokens:
-                    sent_local_tokens.add(sub.token)
+                if local_token:
+                    sent_local_tokens.add(local_token)
+            else:
+                if local_token:
+                    failed_local_tokens.add(local_token)
             time.sleep(0.5)
 
     for token in sent_local_tokens:
         mark_sent(token)
+    for token in failed_local_tokens:
+        mark_failed(token)
     if sent_local_tokens:
         log.info("updated last_sent for %d local subscription(s)", len(sent_local_tokens))
+    if failed_local_tokens:
+        log.info("recorded %d failed send(s)", len(failed_local_tokens))
 
     log.info("sent %d/%d digest(s)", sent, len(subscribers))
 
@@ -294,12 +297,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     return rc
 
 
-def _open_preview() -> None:
-    """Open the first HTML preview in the default browser."""
+def _open_preview(preferred: Optional[Path] = None) -> None:
+    """Open a digest preview in the default browser."""
     import webbrowser
-    previews = sorted(PREVIEW_DIR.glob("*.html"))
-    if previews:
-        webbrowser.open(previews[0].as_uri())
+    path = preferred if preferred and preferred.is_file() else None
+    if path is None:
+        previews = list(PREVIEW_DIR.glob("*.html"))
+        if previews:
+            path = max(previews, key=lambda p: p.stat().st_mtime)
+    if path:
+        webbrowser.open(path.as_uri())
 
 
 if __name__ == "__main__":
