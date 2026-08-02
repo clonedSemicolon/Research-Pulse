@@ -221,6 +221,24 @@ research-pulse add-topic --id data-science --label "Data Science" --keywords "da
 
 ## Changelog
 
+### v0.6.0
+
+**New Features:**
+- **Subscribe module refactored** — extracted from monolithic `cli.py` into `research_agent.subscribe` package with separate models, storage, service, and CLI layers.
+- **Send tracking** — each subscription now tracks `sent_count` and `failure_count` independently. `mark_sent()` increments success count, `mark_failed()` increments failure count without affecting `last_sent`.
+- **Admin subscriber list** — shows full stats: email, frequency, topics, last_sent, due status, sent count, and failure count.
+- **Admin send-to tracking** — `send-to` command records success/failure per delivery.
+- **Subscribe defaults** — subscribing now checks existing subscription topics first and shows them as defaults with markers. Email is asked first so existing subscriptions can be looked up.
+- **Add topics to existing subscription** — subscribe flow offers an 'add' option to append topics without replacing existing ones. `add_topic_to_subscription()` supports single-topic adds.
+- **Local config isolation** — `data/local.json` is completely isolated from subscription changes, verified by dedicated tests.
+- **Improved paper relevance** — `rank.py` now uses better relevance scoring for topic-based paper selection.
+
+**Bug Fixes:**
+- Fixed `__version__` mismatch between `__init__.py` and `pyproject.toml`.
+
+**Tests:**
+- Comprehensive test suite: **291 assertions** across 25 test groups covering subscriptions, pipeline, rendering, dedup, frequency cycles, admin features, edge cases, and config isolation.
+
 ### v0.5.8
 
 **Bug Fixes:**
@@ -232,7 +250,7 @@ research-pulse add-topic --id data-science --label "Data Science" --keywords "da
 **Improvements:**
 - Added topic merge when a subscriber exists in both CSV and local sources — union of topics is used.
 - Added warning when a subscriber has topics not in `topics.yaml` (previously silently skipped).
-- Added comprehensive CI test suite (168 assertions) that runs on every push/PR to master.
+- Added comprehensive CI test suite (291 assertions) that runs on every push/PR to master.
 - Tests run across Python 3.10, 3.11, and 3.12.
 - Cleaned up sample subscriber CSV.
 

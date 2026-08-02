@@ -298,6 +298,15 @@ topics:
     semanticscholar: "LLM in Code Summary"
     europepmc: "LLM in Code Summary"
 
+  - id: devops
+    label: "Devops"
+    keywords: ["Devops"]
+    arxiv: []
+    biorxiv: []
+    openalex: "Devops"
+    semanticscholar: "Devops"
+    europepmc: "Devops"
+
 # Research-industry / community news. Pulled via RSS and shown in a shared
 # "What's happening in research" section for every subscriber.
 news_feeds:
